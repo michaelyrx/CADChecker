@@ -1,0 +1,4 @@
+interface:
+  display_name: "NX PDF Drawing Inspection"
+  short_description: "Learn baselines and audit NX PDF drawing inspections"
+  default_prompt: "Use $nx-pdf-drawing-inspection to learn or select a drawing baseline, inspect a target dataset with released rules, and produce an auditable evidence-backed report."
