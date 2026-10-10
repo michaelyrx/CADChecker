@@ -17,12 +17,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     drawing = await updateDb(db => {
       const item = db.drawings.find(d => d.id === id);
       if (!item) throw new Error("Drawing not found");
+      if (db.workflowRuns.some(run => run.drawingId === id && run.status === "running")) throw new Error("Workflow already running");
       if (item.analysis?.status === "running" && Date.now() - Date.parse(item.analysis.startedAt) < 120_000) throw new Error("Analysis already running");
       item.analysis = { status: "running", startedAt: new Date().toISOString() };
       return { ...item };
     });
   } catch (error) {
     if ((error as Error).message === "Drawing not found") return failure("Drawing not found", 404);
+    if ((error as Error).message === "Workflow already running") return failure("Workflow already running", 409);
     if ((error as Error).message === "Analysis already running") return failure("Analysis already running", 409);
     throw error;
   }
