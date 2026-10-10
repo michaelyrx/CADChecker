@@ -4,7 +4,9 @@ import path from "node:path";
 
 export type Category = { id: string; name: string; createdAt: string };
 export type Project = { id: string; name: string; code: string; description: string; categoryId: string; createdAt: string };
-export type Drawing = { id: string; projectId: string; name: string; size: number; uploadedAt: string };
+export type PageInventory = { page: number; pathConstruction: number; pathPaint: number; textOperations: number; xobjectDraws: number; status: "vector_content" | "undetermined" };
+export type Analysis = { status: "running" | "succeeded" | "failed"; startedAt: string; completedAt?: string; runId?: string; error?: string; sha256?: string; pageCount?: number; pages?: PageInventory[]; parser?: string };
+export type Drawing = { id: string; projectId: string; name: string; size: number; uploadedAt: string; analysis?: Analysis };
 export type Database = { categories: Category[]; projects: Project[]; drawings: Drawing[] };
 
 export const dataDir = process.env.CADLINT_DATA_DIR || path.join(process.cwd(), ".data");
