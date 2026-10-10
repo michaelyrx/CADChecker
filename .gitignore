@@ -5,3 +5,4 @@ frontend/*.tsbuildinfo
 frontend/.data/
 backend/.venv/
 **/__pycache__/
+.local-verification/
