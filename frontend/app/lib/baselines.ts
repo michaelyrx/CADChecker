@@ -4,9 +4,10 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { aiConfig, requestAiJson } from "./ai";
+import { nearbyVectorPaths, type VectorPage } from "./geometry-candidates";
 import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type BaselineDifference, type DrawingFact, type DrawingFactKind, type VisualObservation } from "./store";
 
-const promptVersion = "baseline-observations-v5" as const;
+const promptVersion = "baseline-nearby-paths-v6" as const;
 const execute = promisify(execFile);
 const kinds: DrawingFactKind[] = ["identity", "view_label", "dimension_text", "gdt_text", "technical_note"];
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -71,7 +72,7 @@ async function sourceText(drawingId: string, analysis: Analysis) {
   const visionPageNumbers = visionCandidates.slice(0, 3);
   if (visionCandidates.length > visionPageNumbers.length) partialText = true;
   if (!pages.length && !visionPageNumbers.length) throw new Error("No readable PDF content");
-  return { pages, partialText, visionPageNumbers };
+  return { pages, vectorPages: vectors.pages as VectorPage[], partialText, visionPageNumbers };
 }
 
 async function preparedInput(drawingId: string, analysis: Analysis) {
@@ -107,7 +108,7 @@ async function preparedInput(drawingId: string, analysis: Analysis) {
       images.push({ page, regionId, rect, jpegBase64: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") });
     }
   }
-  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text }) => ({ page, text })), images: images.map(({ page, regionId, rect, sha256 }) => ({ page, regionId, rect, sha256 })) })).digest("hex");
+  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text }) => ({ page, text })), vectorPages: source.vectorPages.map(({ page, vector_objects }) => ({ page, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, sha256 }) => ({ page, regionId, rect, sha256 })) })).digest("hex");
   return { ...source, images, visionResolutionLimited, inputSha256, model: provider === "deepseek" && images.length ? process.env.DEEPSEEK_VISION_MODEL?.trim() || "deepseek-flash" : aiConfig().model };
 }
 
@@ -157,7 +158,9 @@ export async function verifiedManualFact(baseline: Baseline, page: number, kind:
   const source = vectors.pages.find((item: { page?: unknown }) => item.page === page);
   if (!source || typeof source.text_content !== "string" || !normalize(source.text_content).includes(normalize(quote))) throw new Error("Fact quote is not in the PDF text");
   const origin = Array.isArray(source.text_fragments) ? source.text_fragments.find((item: { text?: unknown }) => typeof item.text === "string" && normalize(item.text).includes(normalize(quote))) : undefined;
-  return { id: randomUUID(), kind, page, quote: normalize(quote), review: "pending", confidence: 0.9, geometryLink: "unresolved", sourceMethod: "pdf_text", ...(origin && Number.isFinite(origin.x) && Number.isFinite(origin.y) ? { textOrigin: { x: origin.x, y: origin.y } } : {}) };
+  const fact: DrawingFact = { id: randomUUID(), kind, page, quote: normalize(quote), review: "pending", confidence: 0.9, geometryLink: "unresolved", sourceMethod: "pdf_text", ...(origin && Number.isFinite(origin.x) && Number.isFinite(origin.y) ? { textOrigin: { x: origin.x, y: origin.y } } : {}) };
+  const nearbyPaths = nearbyVectorPaths(fact, vectors.pages);
+  return nearbyPaths.length ? { ...fact, nearbyPaths } : fact;
 }
 
 async function extractFacts(input: Awaited<ReturnType<typeof preparedInput>>) {
@@ -175,7 +178,10 @@ async function extractFacts(input: Awaited<ReturnType<typeof preparedInput>>) {
       { pages: batch.pages.map(({ page, text }) => ({ page, text })), renderedRegions: batch.images.map(({ page, regionId, rect }) => ({ page, regionId, rect })) }, 5000,
       { model: input.model, images: batch.images.map(({ page, regionId, jpegBase64 }) => ({ page, regionId, jpegBase64 })) },
     );
-    facts.push(...validatedFacts(output.content, batch.pages, batch.images));
+    facts.push(...validatedFacts(output.content, batch.pages, batch.images).map(fact => {
+      const nearbyPaths = nearbyVectorPaths(fact, input.vectorPages);
+      return nearbyPaths.length ? { ...fact, nearbyPaths } : fact;
+    }));
     observations.push(...validatedObservations(output.content, batch.images));
     usage.promptTokens += output.usage?.promptTokens || 0;
     usage.completionTokens += output.usage?.completionTokens || 0;
@@ -207,7 +213,7 @@ export async function learnBaseline(projectId: string, drawingId: string): Promi
     return updateDb(db => {
       const run = db.baselineLearningRuns.find(item => item.id === started.id)!;
       const version = Math.max(0, ...db.baselines.filter(item => item.projectId === projectId).map(item => item.version)) + 1;
-      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF content was omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
+      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Nearby vector paths are spatial candidates only; geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF content was omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
       db.baselines.push(baseline);
       run.status = "succeeded"; run.completedAt = new Date().toISOString(); run.baselineId = baseline.id; run.usage = output.usage;
       return structuredClone(baseline);

@@ -317,6 +317,17 @@ try {
   assert.equal(baseline.facts[0].review, "pending");
   assert.equal(baseline.facts[0].geometryLink, "unresolved");
   assert.deepEqual(baseline.facts[0].textOrigin, { x: 20, y: 100 });
+  const nearbyPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\nBT /F1 12 Tf 20 80 Td (THIS LONG PDF TEXT KEEPS THE PAGE ON THE TEXT EXTRACTION PATH AND TESTS NEARBY VECTOR EVIDENCE WITHOUT CLAIMING AN ANNOTATION ATTACHMENT) Tj ET\n20 100 m 70 100 l S\n250 180 m 290 180 l S\n");
+  const nearbyDrawing = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(nearbyPdf, "nearby-paths.pdf") }, 201);
+  await json(`/api/drawings/${nearbyDrawing.id}/analysis`, { method: "POST" });
+  const nearbyBaseline = await json(baselineUrl, learn(nearbyDrawing.id), 201);
+  assert.equal(nearbyBaseline.facts[0].sourceMethod, "pdf_text");
+  assert.equal(nearbyBaseline.facts[0].geometryLink, "unresolved");
+  assert.deepEqual(nearbyBaseline.facts[0].nearbyPaths.map(item => item.id), ["P1-V1"]);
+  assert.equal(nearbyBaseline.facts[0].nearbyPaths[0].distancePt, 0);
+  const nearbyManual = await json(`/api/baselines/${nearbyBaseline.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", page: 1, kind: "technical_note", quote: "THIS LONG PDF TEXT" }) });
+  assert.equal(nearbyManual.facts[1].geometryLink, "unresolved");
+  assert.equal(nearbyManual.facts[1].nearbyPaths?.[0]?.id, "P1-V1");
   const baselineAction = body => ({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await json(`/api/baselines/${baseline.id}`, baselineAction({ action: "approve" }), 409);
   await json(`/api/baselines/${baseline.id}`, baselineAction({ action: "add", page: 1, kind: "view_label", quote: "FAKE VIEW" }), 400);
@@ -347,6 +358,7 @@ try {
   assert.equal(visionBaseline.facts[0].regionId, "p1-r1");
   assert.ok(visionBaseline.facts[0].regionRect.width > 0);
   assert.equal(visionBaseline.facts[0].sourceMethod, "vision");
+  assert.equal(visionBaseline.facts[0].nearbyPaths, undefined);
   assert.equal(visionBaseline.facts[0].review, "pending");
   assert.ok(visionBaseline.facts[0].confidence < 0.6);
   await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", "page-1-overview.jpg"));
