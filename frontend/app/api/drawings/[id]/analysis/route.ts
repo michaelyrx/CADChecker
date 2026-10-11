@@ -1,4 +1,5 @@
 import { analyzeDrawing } from "@/app/lib/analyzer";
+import { syncEngineeringRequirements } from "@/app/lib/engineering-requirements";
 import { failure, readDb, updateDb } from "@/app/lib/store";
 export const runtime = "nodejs";
 
@@ -33,5 +34,6 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     const item = db.drawings.find(d => d.id === id);
     if (item) item.analysis = result;
   });
+  if (result.status === "succeeded") await syncEngineeringRequirements(id, result).catch(() => undefined);
   return Response.json(result);
 }

@@ -6,8 +6,9 @@ export function makePdf(content) {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
     Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`), stream, Buffer.from("endstream")]),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
   let pdf = Buffer.from("%PDF-1.4\n");
   const offsets = [0];
@@ -22,3 +23,4 @@ export function makePdf(content) {
 
 export const vectorPdf = makePdf("0 0 1 RG 25 25 m 275 175 l S\n");
 export const blankPdf = makePdf("");
+export const requirementsPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\n");

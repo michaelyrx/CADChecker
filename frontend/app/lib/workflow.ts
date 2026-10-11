@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { analyzeDrawing } from "./analyzer";
+import { syncEngineeringRequirements } from "./engineering-requirements";
 import { evaluateRules } from "./rules";
 import { updateDb, type WorkflowConfig, type WorkflowRun, type WorkflowStep } from "./store";
 
@@ -57,7 +58,7 @@ export async function executeWorkflow(projectId: string, drawingId: string): Pro
         return structuredClone(item);
       });
     }
-    return updateDb(db => {
+    const finished = await updateDb(db => {
       const item = db.workflowRuns.find(value => value.id === run.id)!;
       const source = db.drawings.find(value => value.id === drawingId)!;
       source.analysis = analysis;
@@ -75,6 +76,8 @@ export async function executeWorkflow(projectId: string, drawingId: string): Pro
       if (!needsReview) item.completedAt = new Date().toISOString();
       return structuredClone(item);
     });
+    await syncEngineeringRequirements(drawingId, analysis).catch(() => undefined);
+    return finished;
   } catch (error) {
     return updateDb(db => {
       const item = db.workflowRuns.find(value => value.id === run.id)!;

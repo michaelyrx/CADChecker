@@ -13,8 +13,9 @@ def sample_pdf(content, page_options=""):
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] {page_options} /Contents 4 0 R /Resources << >> >>".encode(),
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] {page_options} /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".encode(),
         b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"endstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
     pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -64,6 +65,13 @@ class InventoryTest(unittest.TestCase):
         page = vectors["pages"][0]
         self.assertEqual((page["display_width"], page["display_height"]), (200, 300))
         self.assertEqual(page["path_regions"], [{"x": 24.0, "y": 24.0, "width": 77.0, "height": 52.0}])
+
+    def test_engineering_note_text_is_saved_with_page(self):
+        _, vectors = self.inspect(b"BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\n")
+        page = vectors["pages"][0]
+        self.assertEqual(page["page"], 1)
+        self.assertIn("MAX PRESSURE 2 MPa", page["text_content"])
+        self.assertFalse(page["text_truncated"])
 
 
 if __name__ == "__main__":

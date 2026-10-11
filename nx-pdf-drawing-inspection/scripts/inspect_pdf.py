@@ -164,6 +164,7 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
     resources = page.get("/Resources", {})
     xobjects = resources.get("/XObject", {}) if resources else {}
     fonts = resources.get("/Font", {}) if resources else {}
+    text_content = page.extract_text() or ""
 
     return {
         "page": page_number + 1,
@@ -179,6 +180,8 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
         "path_construction_count": path_build,
         "path_paint_count": path_paint,
         "text_operation_count": text_ops,
+        "text_content": text_content[:12000],
+        "text_truncated": len(text_content) > 12000,
         "xobject_draw_count": image_draws,
         "xobject_names": [str(key) for key in xobjects.keys()],
         "font_names": [str(key) for key in fonts.keys()],

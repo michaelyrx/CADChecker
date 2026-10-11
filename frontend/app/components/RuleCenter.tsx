@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useLocale } from "../lib/locale";
+import EngineeringRuleCenter from "./EngineeringRuleCenter";
 
 type Metric = "min_path_paints_per_page" | "min_text_ops_per_page" | "max_pages";
 type Rule = { code: string; name: string; metric: Metric; threshold: number };
@@ -69,6 +70,7 @@ export default function RuleCenter({ categoryId }: { categoryId: string }) {
       {error && <p className="dl-error" role="alert">{locale === "en" ? error : ({ "Rules are unchanged": "规则内容未改变", "Save at least one rule before publishing": "至少保存一条规则后才能发布", "Duplicate rule code": "规则编号重复", "Invalid rule fields": "规则字段无效", "Draft is based on an older version": "草稿基于旧版本，请重新保存" } as Record<string,string>)[error] || error}</p>}
       <div className="dl-rule-actions"><button className="dl-secondary" disabled={busy || !dirty} onClick={saveDraft}>{t("保存草稿", "Save draft")}</button><button className="dl-primary" disabled={busy || dirty || !view.draft?.rules.length} onClick={publish}>{t("发布新版本", "Publish new version")}</button></div>
       {view.releases.length > 0 && <div className="dl-rule-history"><strong>{t("发布历史", "Release history")}</strong>{view.releases.map(release => <p key={release.id}>v{release.version} · {release.rules.length} {t("条规则", "rules")} · {new Date(release.publishedAt).toLocaleString(locale)} · {release.sha256.slice(0, 12)}</p>)}</div>}
+      <EngineeringRuleCenter categoryId={categoryId}/>
     </>}
   </div>;
 }
