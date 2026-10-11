@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -20,9 +21,26 @@ await new Promise((resolve, reject) => listener.once("error", reject).listen(0, 
 const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
 const base = `http://127.0.0.1:${port}`;
+let mockMode = "success";
+const mock = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const input = JSON.parse(Buffer.concat(chunks).toString());
+  assert.equal(request.url, "/chat/completions");
+  assert.equal(request.headers.authorization, "Bearer smoke-key");
+  assert.equal(input.model, "deepseek-flash");
+  assert.deepEqual(input.response_format, { type: "json_object" });
+  assert.equal(JSON.parse(input.messages[1].content).scope, "pdf_input_quality_v1");
+  assert.ok(!JSON.stringify(input).includes("blank-page.pdf"));
+  if (mockMode === "rate-limit") { response.writeHead(429); response.end("limited"); return; }
+  response.setHeader("Content-Type", "application/json");
+  response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: mockMode === "invalid" ? "not-json" : JSON.stringify({ summary: "Review page input quality", possibleCauses: ["Export settings"], recommendedActions: ["Check PDF export"], limitations: "No CAD geometry checked" }) } }], usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 } }));
+});
+await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127.0.0.1", resolve));
+const mockBase = `http://127.0.0.1:${mock.address().port}`;
 const server = spawn(process.execPath, [nextCli, "start", "--hostname", "127.0.0.1", "--port", String(port)], {
   cwd: path.join(root, "frontend"),
-  env: { ...process.env, CADLINT_DATA_DIR: dataDir, CADLINT_PYTHON: python },
+  env: { ...process.env, CADLINT_DATA_DIR: dataDir, CADLINT_PYTHON: python, DEEPSEEK_API_KEY: "smoke-key", DEEPSEEK_BASE_URL: mockBase, DEEPSEEK_MODEL: "deepseek-flash" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let serverOutput = "";
@@ -145,10 +163,27 @@ try {
   assert.equal((await json(`/api/projects/${project.id}/checks`)).find(item => item.id === freshRun.checkRunId).releaseVersion, 2);
   await json(`${workflowUrl}/publish`, { method: "POST" }, 409);
   const reviewsUrl = `/api/projects/${project.id}/reviews`;
+  const adviceUrl = `/api/projects/${project.id}/advice`;
   const reportsUrl = `/api/projects/${project.id}/reports`;
   const reviewBody = (decision, note, resultIndex = 0) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex, decision, note }) });
   const reportBody = checkRunId => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ checkRunId }) });
   assert.deepEqual(await json(reviewsUrl), []);
+  assert.deepEqual(await json(adviceUrl), []);
+  assert.deepEqual(await json("/api/ai/status"), { configured: true, model: "deepseek-flash" });
+  const adviceBody = (checkRunId, language = "en") => json(`/api/checks/${checkRunId}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language }) }, 201);
+  await json(`/api/checks/${firstCheck.id}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language: "en" }) }, 400);
+  const firstAdvice = await adviceBody(blankCheck.id);
+  assert.equal(firstAdvice.status, "succeeded");
+  assert.equal(firstAdvice.content.summary, "Review page input quality");
+  assert.equal(firstAdvice.usage.totalTokens, 80);
+  mockMode = "rate-limit";
+  await json(`/api/checks/${blankCheck.id}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language: "en" }) }, 502);
+  mockMode = "invalid";
+  await json(`/api/checks/${blankCheck.id}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language: "en" }) }, 502);
+  mockMode = "success";
+  assert.equal((await adviceBody(blankCheck.id, "zh-CN")).language, "zh-CN");
+  assert.deepEqual((await json(adviceUrl)).map(item => item.status).sort(), ["failed", "failed", "succeeded", "succeeded"]);
+  assert.equal((await json(`/api/projects/${project.id}/checks`)).find(item => item.id === blankCheck.id).results[0].status, "REVIEW");
   assert.deepEqual(await json(reportsUrl), []);
   await json(`/api/checks/${firstCheck.id}/reviews`, reviewBody("confirmed", "Not a review finding"), 400);
   await json(`/api/checks/${blankCheck.id}/reviews`, reviewBody("confirmed", "No"), 400);
@@ -194,9 +229,10 @@ try {
   assert.equal(list.length, 3);
   const inventory = JSON.parse(await readFile(path.join(dataDir, "analysis", drawing.id, rerun.runId, "vectors.json"), "utf8"));
   assert.equal(inventory.pages[0].path_paint_count, 1);
-  console.log("Local smoke test passed: PDF analysis, rules, workflows, per-finding reviews, immutable reports, and safe HTML export.");
+  console.log("Local smoke test passed: PDF analysis, rules, workflows, DeepSeek mock advice, per-finding reviews, immutable reports, and safe HTML export.");
 } finally {
   server.kill("SIGTERM");
   await new Promise(resolve => { if (server.exitCode !== null) resolve(); else server.once("exit", resolve); });
+  await new Promise(resolve => mock.close(resolve));
   await rm(work, { recursive: true, force: true });
 }
