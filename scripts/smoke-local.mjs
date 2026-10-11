@@ -325,6 +325,14 @@ try {
   assert.equal(nearbyBaseline.facts[0].geometryLink, "unresolved");
   assert.deepEqual(nearbyBaseline.facts[0].nearbyPaths.map(item => item.id), ["P1-V1"]);
   assert.equal(nearbyBaseline.facts[0].nearbyPaths[0].distancePt, 0);
+  const evidenceResponse = await fetch(`${base}/api/baselines/${nearbyBaseline.id}/facts/${nearbyBaseline.facts[0].id}/evidence`);
+  assert.equal(evidenceResponse.status, 200);
+  assert.match(evidenceResponse.headers.get("content-type"), /^image\/svg\+xml/);
+  const evidenceSvg = await evidenceResponse.text();
+  assert.match(evidenceSvg, /data:image\/jpeg;base64,/);
+  assert.match(evidenceSvg, /<rect /);
+  assert.match(evidenceSvg, /<circle cx="40" cy="120"/);
+  await json(`/api/baselines/${nearbyBaseline.id}/facts/unknown/evidence`, undefined, 404);
   const nearbyManual = await json(`/api/baselines/${nearbyBaseline.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", page: 1, kind: "technical_note", quote: "THIS LONG PDF TEXT" }) });
   assert.equal(nearbyManual.facts[1].geometryLink, "unresolved");
   assert.equal(nearbyManual.facts[1].nearbyPaths?.[0]?.id, "P1-V1");
@@ -352,6 +360,9 @@ try {
   assert.deepEqual(comparison.differences.map(item => item.status).sort(), ["added", "removed", "removed"]);
   assert.equal(comparison.baselineSha256, noteAnalysis.sha256);
   assert.equal(comparison.targetFacts[0].quote, "MAX PRESSURE 3 MPa");
+  const targetEvidence = await fetch(`${base}/api/baseline-comparisons/${comparison.id}/facts/${comparison.targetFacts[0].id}/evidence`);
+  assert.equal(targetEvidence.status, 200);
+  assert.match(await targetEvidence.text(), /data:image\/jpeg;base64,/);
   assert.equal((await json(compareUrl))[0].id, comparison.id);
   const repeatedPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\nBT /F1 12 Tf 20 50 Td (MAX PRESSURE 2 MPa) Tj ET\nBT /F1 12 Tf 120 100 Td (TOP VIEW) Tj ET\nBT /F1 12 Tf 120 50 Td (TOP VIEW) Tj ET\n");
   const repeatedDrawing = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(repeatedPdf, "repeated-labels.pdf") }, 201);
@@ -385,6 +396,7 @@ try {
   assert.ok(visionBaseline.facts[0].regionRect.width > 0);
   assert.equal(visionBaseline.facts[0].sourceMethod, "vision");
   assert.equal(visionBaseline.facts[0].nearbyPaths, undefined);
+  await json(`/api/baselines/${visionBaseline.id}/facts/${visionBaseline.facts[0].id}/evidence`, undefined, 409);
   assert.equal(visionBaseline.facts[0].review, "pending");
   assert.ok(visionBaseline.facts[0].confidence < 0.6);
   await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", "page-1-overview.jpg"));
