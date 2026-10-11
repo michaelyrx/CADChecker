@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { analyzeDrawing } from "./analyzer";
 import { syncEngineeringRequirements } from "./engineering-requirements";
+import { snapshotEngineeringRequirements } from "./engineering-review";
 import { evaluateRules } from "./rules";
 import { updateDb, type WorkflowConfig, type WorkflowRun, type WorkflowStep } from "./store";
 
@@ -65,7 +66,7 @@ export async function executeWorkflow(projectId: string, drawingId: string): Pro
       item.steps[0] = { ...item.steps[0], status: "succeeded", completedAt, detail: reuse ? "Reused previous analysis" : "New analysis completed" };
       item.steps[1] = { key: "check", status: "running", startedAt: completedAt };
       const results = evaluateRules(rules, analysis);
-      const check = { id: randomUUID(), projectId, drawingId, categoryId: item.categoryId, releaseId: item.ruleReleaseId, releaseVersion: item.ruleVersion, releaseSha256: item.ruleSha256, analysisRunId: analysis.runId!, sourceSha256: analysis.sha256!, createdAt: new Date().toISOString(), results };
+      const check = { id: randomUUID(), projectId, drawingId, categoryId: item.categoryId, releaseId: item.ruleReleaseId, releaseVersion: item.ruleVersion, releaseSha256: item.ruleSha256, analysisRunId: analysis.runId!, sourceSha256: analysis.sha256!, createdAt: new Date().toISOString(), results, requirements: snapshotEngineeringRequirements(db, item.categoryId) };
       db.checkRuns.push(check);
       item.checkRunId = check.id; item.sourceSha256 = analysis.sha256; item.analysisRunId = analysis.runId;
       item.steps[1] = { ...item.steps[1], status: "succeeded", completedAt: new Date().toISOString(), detail: `${results.filter(result => result.status === "REVIEW").length} need review` };
