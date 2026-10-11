@@ -6,7 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { blankPdf, vectorPdf, requirementsPdf, requirementsVariantPdf } from "./pdf-fixtures.mjs";
+import { blankPdf, vectorPdf, requirementsPdf, requirementsVariantPdf, makePdf } from "./pdf-fixtures.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const work = await mkdtemp(path.join(os.tmpdir(), "cadlint-smoke-"));
@@ -34,14 +34,18 @@ const mock = createServer(async (request, response) => {
   const facts = JSON.parse(vision ? input.messages[1].content[0].text : input.messages[1].content);
   const requirements = Array.isArray(facts.pages);
   const baselineFacts = input.messages[0].content.includes("visible textual facts");
-  if (vision) assert.match(input.messages[1].content[2].image_url.url, /^data:image\/jpeg;base64,/);
+  if (vision) {
+    assert.match(input.messages[1].content[2].image_url.url, /^data:image\/jpeg;base64,/);
+    assert.equal(input.messages[1].content.length, 1 + 2 * facts.renderedRegions.length);
+    assert.equal(new Set(facts.renderedRegions.map(region => region.regionId)).size, facts.renderedRegions.length);
+  }
   if (requirements && facts.pages.length && !vision) assert.match(facts.pages[0].text, /MAX PRESSURE [23] MPa/);
   if (!requirements) assert.equal(facts.scope, "pdf_input_quality_v1");
   assert.ok(!JSON.stringify(input).includes("blank-page.pdf"));
   if (mockMode === "rate-limit") { response.writeHead(429); response.end("limited"); return; }
   response.setHeader("Content-Type", "application/json");
   const quote = facts.pages?.[0]?.text.includes("3 MPa") ? "MAX PRESSURE 3 MPa" : "MAX PRESSURE 2 MPa";
-  const content = baselineFacts ? { facts: [{ page: 1, kind: "technical_note", quote: mockMode === "baseline-invalid" ? "MAX PRESSURE 99 MPa" : vision ? "VISIBLE VISION NOTE" : quote }] } : requirements ? { requirements: [{ page: 1, quote: mockMode === "requirements-invalid" ? "MAX PRESSURE 99 MPa" : quote }] } : { summary: "Review page input quality", possibleCauses: ["Export settings"], recommendedActions: ["Check PDF export"], limitations: "No CAD geometry checked" };
+  const content = baselineFacts ? { facts: [{ page: 1, kind: "technical_note", quote: mockMode === "baseline-invalid" ? "MAX PRESSURE 99 MPa" : vision ? "VISIBLE VISION NOTE" : quote, ...(vision ? { regionId: mockMode === "bad-region" ? "unknown" : facts.renderedRegions[0].regionId } : {}) }] } : requirements ? { requirements: [{ page: 1, quote: mockMode === "requirements-invalid" ? "MAX PRESSURE 99 MPa" : quote }] } : { summary: "Review page input quality", possibleCauses: ["Export settings"], recommendedActions: ["Check PDF export"], limitations: "No CAD geometry checked" };
   response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: mockMode === "invalid" ? "not-json" : JSON.stringify(content) } }], usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 } }));
 });
 await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127.0.0.1", resolve));
@@ -340,10 +344,24 @@ try {
   assert.equal((await json(compareUrl))[0].id, comparison.id);
   const visionBaseline = await json(baselineUrl, learn(drawing.id), 201);
   assert.deepEqual(visionBaseline.visionPages, [1]);
+  assert.equal(visionBaseline.facts[0].regionId, "p1-r1");
+  assert.ok(visionBaseline.facts[0].regionRect.width > 0);
   assert.equal(visionBaseline.facts[0].sourceMethod, "vision");
   assert.equal(visionBaseline.facts[0].review, "pending");
   assert.ok(visionBaseline.facts[0].confidence < 0.6);
-  await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", "page-1.jpg"));
+  await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", "page-1-overview.jpg"));
+  const regionResponse = await fetch(`${base}/api/baselines/${visionBaseline.id}/regions/${visionBaseline.facts[0].regionId}`);
+  assert.equal(regionResponse.status, 200);
+  assert.equal(regionResponse.headers.get("content-type"), "image/jpeg");
+  assert.equal((await json(`/api/baselines/${visionBaseline.id}/regions/p1-r99`, undefined, 404)).error, "PDF region not found");
+  const large = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(makePdf("25 25 m 975 675 l S\n", "[0 0 1000 700]"), "large-vector.pdf") }, 201);
+  await json(`/api/drawings/${large.id}/analysis`, { method: "POST" });
+  mockMode = "bad-region";
+  await json(baselineUrl, learn(large.id), 502);
+  mockMode = "success";
+  const tiled = await json(baselineUrl, learn(large.id), 201);
+  assert.equal(tiled.facts[0].regionId, "p1-r1");
+  for (let i = 1; i <= 6; i++) await access(path.join(dataDir, "analysis", large.id, tiled.analysisRunId, "vision", `p1-r${i}.jpg`));
   await json(`/api/baselines/${visionBaseline.id}`, baselineAction({ action: "approve" }), 409);
   const correctedVision = await json(`/api/baselines/${visionBaseline.id}`, baselineAction({ action: "correct", factId: visionBaseline.facts[0].id, kind: "technical_note", quote: "CORRECTED VISION NOTE" }));
   assert.equal(correctedVision.facts[0].quote, "CORRECTED VISION NOTE");

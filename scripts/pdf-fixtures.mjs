@@ -1,12 +1,12 @@
 import { Buffer } from "node:buffer";
 
 /** A tiny, valid one-page PDF with the supplied page content stream. */
-export function makePdf(content) {
+export function makePdf(content, mediaBox = "[0 0 300 200]") {
   const stream = Buffer.from(content, "ascii");
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox ${mediaBox} /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>`,
     Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`), stream, Buffer.from("endstream")]),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];

@@ -46,6 +46,10 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(manifest["page_count"], 1)
         self.assertEqual(vectors["pages"][0]["path_construction_count"], 2)
         self.assertEqual(vectors["pages"][0]["path_paint_count"], 1)
+        self.assertEqual(vectors["pages"][0]["vector_objects"][0]["commands"], [
+            {"op": "m", "points": [[25.0, 175.0]]},
+            {"op": "l", "points": [[275.0, 25.0]]},
+        ])
 
     def test_empty_page_has_no_vector_operations(self):
         _, vectors = self.inspect(b"")
@@ -59,6 +63,14 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual((page["display_width"], page["display_height"]), (240, 140))
         self.assertEqual(page["path_region_count"], 1)
         self.assertEqual(page["path_regions"], [{"x": 29.0, "y": 39.0, "width": 162.0, "height": 62.0}])
+        self.assertEqual(page["vector_objects"][0]["commands"][0]["points"], [[30.0, 100.0]])
+
+    def test_curve_and_rectangle_are_saved_as_geometry(self):
+        _, vectors = self.inspect(b"10 20 m 20 30 40 30 50 20 c h S 100 50 30 20 re S\n")
+        objects = vectors["pages"][0]["vector_objects"]
+        self.assertEqual(len(objects), 2)
+        self.assertEqual([command["op"] for command in objects[0]["commands"]], ["m", "c", "h"])
+        self.assertEqual(objects[1]["commands"][0]["points"], [[100.0, 150.0], [130.0, 150.0], [130.0, 130.0], [100.0, 130.0]])
 
     def test_rotated_region_uses_display_coordinates(self):
         _, vectors = self.inspect(b"25 25 50 75 re S\n", "/Rotate 90")

@@ -104,15 +104,29 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
     points: list[tuple[float, float]] = []
     regions: list[dict[str, float]] = []
     region_count = 0
+    vector_objects: list[dict[str, Any]] = []
+    commands: list[dict[str, Any]] = []
+    command_count = 0
 
-    def add_point(x: Any, y: Any) -> None:
+    def add_point(x: Any, y: Any) -> list[float] | None:
         try:
             px, py = float(x), float(y)
             if math.isfinite(px) and math.isfinite(py):
                 a, b, c, d, e, f = matrix
-                points.append((a * px + c * py + e, b * px + d * py + f))
+                target = (a * px + c * py + e, b * px + d * py + f)
+                points.append(target)
+                displayed = display_point(*target, crop, rotation)
+                return [round(displayed[0], 2), round(displayed[1], 2)]
         except (TypeError, ValueError):
             pass
+        return None
+
+    def add_command(operator: bytes, coordinates: list[tuple[Any, Any]]) -> None:
+        nonlocal command_count
+        command_count += 1
+        transformed = [add_point(x, y) for x, y in coordinates]
+        if len(commands) < 200 and all(point is not None for point in transformed):
+            commands.append({"op": operator.decode("ascii"), "points": transformed})
 
     for operands, operator in stream.operations:
         name = operator.decode("latin-1", "replace")
@@ -135,21 +149,21 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
             except (TypeError, ValueError):
                 pass
         elif operator in (b"m", b"l") and len(operands) == 2:
-            add_point(*operands)
+            add_command(operator, [tuple(operands)])
         elif operator == b"c" and len(operands) == 6:
-            for index in (0, 2, 4):
-                add_point(operands[index], operands[index + 1])
+            add_command(operator, [(operands[index], operands[index + 1]) for index in (0, 2, 4)])
         elif operator == b"v" and len(operands) == 4:
-            for index in (0, 2):
-                add_point(operands[index], operands[index + 1])
+            add_command(operator, [(operands[index], operands[index + 1]) for index in (0, 2)])
         elif operator == b"y" and len(operands) == 4:
-            for index in (0, 2):
-                add_point(operands[index], operands[index + 1])
+            add_command(operator, [(operands[index], operands[index + 1]) for index in (0, 2)])
+        elif operator == b"h":
+            command_count += 1
+            if len(commands) < 200:
+                commands.append({"op": "h", "points": []})
         elif operator == b"re" and len(operands) == 4:
             try:
                 x, y, width, height = (float(value) for value in operands)
-                for px, py in ((x, y), (x + width, y), (x, y + height), (x + width, y + height)):
-                    add_point(px, py)
+                add_command(operator, [(x, y), (x + width, y), (x + width, y + height), (x, y + height)])
             except (TypeError, ValueError):
                 pass
         elif operator in PATH_PAINT:
@@ -159,7 +173,12 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
                     region_count += 1
                     if len(regions) < 200:
                         regions.append(region)
+                    if len(vector_objects) < 20000:
+                        vector_objects.append({"id": f"P{page_number + 1}-V{region_count}", "paint": name, "bbox": region,
+                                               "commands": commands, "commands_truncated": command_count > len(commands)})
             points = []
+            commands = []
+            command_count = 0
 
     resources = page.get("/Resources", {})
     xobjects = resources.get("/XObject", {}) if resources else {}
@@ -193,6 +212,8 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
         "display_height": page_height,
         "path_region_count": region_count,
         "path_regions": regions,
+        "vector_objects": vector_objects,
+        "vector_objects_truncated": region_count > len(vector_objects),
         "operation_count": sum(counts.values()),
         "operator_counts": dict(sorted(counts.items())),
         "path_construction_count": path_build,
