@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: Context) {
   catch (error) {
     const message = (error as Error).message;
     if (["Approved baseline not found", "Target drawing not found"].includes(message)) return failure(message, 404);
-    if (["Target analysis is required", "No extractable PDF text", "Analysis text source is invalid"].includes(message)) return failure(message, 409);
+    if (["Target analysis is required", "No readable PDF content", "Analysis text source is invalid", "PDF page rendering failed", "Rendered PDF page is too large"].includes(message)) return failure(message, 409);
     throw error;
   }
 }

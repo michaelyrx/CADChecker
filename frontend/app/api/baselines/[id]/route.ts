@@ -7,9 +7,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   let body: unknown;
   try { body = await request.json(); } catch { return failure("Invalid JSON"); }
   const input = body as { action?: unknown; factId?: unknown; review?: unknown; page?: unknown; kind?: unknown; quote?: unknown } | null;
-  if (input?.action !== "review" && input?.action !== "approve" && input?.action !== "add") return failure("Invalid baseline action");
+  if (input?.action !== "review" && input?.action !== "approve" && input?.action !== "add" && input?.action !== "correct") return failure("Invalid baseline action");
   if (input.action === "review" && (typeof input.factId !== "string" || !["confirmed", "rejected"].includes(String(input.review)))) return failure("Invalid fact review");
   if (input.action === "add" && (typeof input.page !== "number" || typeof input.kind !== "string" || typeof input.quote !== "string")) return failure("Invalid drawing fact");
+  if (input.action === "correct" && (typeof input.factId !== "string" || typeof input.quote !== "string" || input.quote.trim().length < 3 || input.quote.trim().length > 300 || typeof input.kind !== "string" || !["identity", "view_label", "dimension_text", "gdt_text", "technical_note"].includes(input.kind))) return failure("Invalid visual correction");
   try {
     const current = input.action === "add" ? (await readDb()).baselines.find(item => item.id === id) : undefined;
     if (input.action === "add" && !current) return failure("Baseline not found", 404);
@@ -22,6 +23,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         if (!added) throw new Error("Invalid drawing fact");
         if (item.facts.some(value => value.page === added.page && value.kind === added.kind && value.quote.toLocaleLowerCase() === added.quote.toLocaleLowerCase())) throw new Error("Fact already exists");
         item.facts.push(added);
+      } else if (input.action === "correct") {
+        const fact = item.facts.find(value => value.id === input.factId);
+        if (!fact) throw new Error("Fact not found");
+        if (fact.sourceMethod !== "vision") throw new Error("Only visual facts can be corrected here");
+        fact.quote = (input.quote as string).trim(); fact.kind = input.kind as DrawingFactKind; fact.review = "pending"; fact.confidence = 0.55;
       } else if (input.action === "review") {
         const fact = item.facts.find(value => value.id === input.factId);
         if (!fact) throw new Error("Fact not found");
@@ -37,7 +43,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch (error) {
     const message = (error as Error).message;
     if (message === "Baseline not found" || message === "Fact not found") return failure(message, 404);
-    if (["Approved baseline cannot be changed", "Review every fact and confirm at least one before approval", "Fact already exists"].includes(message)) return failure(message, 409);
+    if (["Approved baseline cannot be changed", "Review every fact and confirm at least one before approval", "Fact already exists", "Only visual facts can be corrected here"].includes(message)) return failure(message, 409);
     if (["Invalid drawing fact", "Fact quote is not in the PDF text", "Analysis text source is invalid"].includes(message)) return failure(message);
     throw error;
   }
