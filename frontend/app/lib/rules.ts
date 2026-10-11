@@ -26,7 +26,7 @@ export function evaluateRules(rules: QualityRule[], analysis: Analysis): CheckRe
     }
     return analysis.pages!.map(page => {
       const observed = rule.metric === "min_path_paints_per_page" ? page.pathPaint : page.textOperations;
-      return { ruleCode: rule.code, ruleName: rule.name, page: page.page, observed, threshold: rule.threshold, status: observed >= rule.threshold ? "PASS" : "REVIEW" as const };
+      return { ruleCode: rule.code, ruleName: rule.name, page: page.page, observed, threshold: rule.threshold, status: observed >= rule.threshold ? "PASS" : "REVIEW" as const, ...(page.evidence ? { evidence: page.evidence } : {}) };
     });
   });
 }

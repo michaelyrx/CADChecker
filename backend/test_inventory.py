@@ -9,11 +9,11 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "nx-pdf-drawing-inspection" / "scripts" / "inspect_pdf.py"
 
 
-def sample_pdf(content):
+def sample_pdf(content, page_options=""):
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << >> >>",
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] {page_options} /Contents 4 0 R /Resources << >> >>".encode(),
         b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"endstream",
     ]
     pdf = bytearray(b"%PDF-1.4\n")
@@ -30,11 +30,11 @@ def sample_pdf(content):
 
 
 class InventoryTest(unittest.TestCase):
-    def inspect(self, content):
+    def inspect(self, content, page_options=""):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             pdf = root / "drawing.pdf"
-            pdf.write_bytes(sample_pdf(content))
+            pdf.write_bytes(sample_pdf(content, page_options))
             manifest = root / "manifest.json"
             vectors = root / "vectors.json"
             subprocess.run([sys.executable, str(SCRIPT), str(pdf), "--output", str(manifest), "--vectors", str(vectors)], check=True, capture_output=True)
@@ -50,6 +50,20 @@ class InventoryTest(unittest.TestCase):
         _, vectors = self.inspect(b"")
         self.assertEqual(vectors["pages"][0]["path_paint_count"], 0)
         self.assertEqual(vectors["pages"][0]["text_operation_count"], 0)
+        self.assertEqual(vectors["pages"][0]["path_regions"], [])
+
+    def test_path_region_respects_transform_and_crop(self):
+        _, vectors = self.inspect(b"q 2 0 0 2 10 20 cm 20 30 m 100 60 l S Q\n", "/CropBox [20 40 260 180]")
+        page = vectors["pages"][0]
+        self.assertEqual((page["display_width"], page["display_height"]), (240, 140))
+        self.assertEqual(page["path_region_count"], 1)
+        self.assertEqual(page["path_regions"], [{"x": 29.0, "y": 39.0, "width": 162.0, "height": 62.0}])
+
+    def test_rotated_region_uses_display_coordinates(self):
+        _, vectors = self.inspect(b"25 25 50 75 re S\n", "/Rotate 90")
+        page = vectors["pages"][0]
+        self.assertEqual((page["display_width"], page["display_height"]), (200, 300))
+        self.assertEqual(page["path_regions"], [{"x": 24.0, "y": 24.0, "width": 77.0, "height": 52.0}])
 
 
 if __name__ == "__main__":

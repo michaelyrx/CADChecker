@@ -4,14 +4,16 @@ import path from "node:path";
 
 export type Category = { id: string; name: string; createdAt: string };
 export type Project = { id: string; name: string; code: string; description: string; categoryId: string; createdAt: string };
-export type PageInventory = { page: number; pathConstruction: number; pathPaint: number; textOperations: number; xobjectDraws: number; status: "vector_content" | "undetermined" };
+export type EvidenceRegion = { x: number; y: number; width: number; height: number };
+export type PageEvidence = { width: number; height: number; rotation: number; pathRegionCount: number; pathRegions: EvidenceRegion[] };
+export type PageInventory = { page: number; pathConstruction: number; pathPaint: number; textOperations: number; xobjectDraws: number; status: "vector_content" | "undetermined"; evidence?: PageEvidence };
 export type Analysis = { status: "running" | "succeeded" | "failed"; startedAt: string; completedAt?: string; runId?: string; error?: string; sha256?: string; pageCount?: number; pages?: PageInventory[]; parser?: string };
 export type Drawing = { id: string; projectId: string; name: string; size: number; uploadedAt: string; analysis?: Analysis };
 export type RuleMetric = "min_path_paints_per_page" | "min_text_ops_per_page" | "max_pages";
 export type QualityRule = { code: string; name: string; metric: RuleMetric; threshold: number };
 export type RuleDraft = { categoryId: string; baseVersion: number; rules: QualityRule[]; updatedAt: string };
 export type RuleRelease = { id: string; categoryId: string; version: number; rules: QualityRule[]; sha256: string; publishedAt: string };
-export type CheckResult = { ruleCode: string; ruleName: string; page?: number; observed: number; threshold: number; status: "PASS" | "REVIEW" };
+export type CheckResult = { ruleCode: string; ruleName: string; page?: number; observed: number; threshold: number; status: "PASS" | "REVIEW"; evidence?: PageEvidence };
 export type CheckRun = { id: string; projectId: string; drawingId: string; categoryId: string; releaseId: string; releaseVersion: number; releaseSha256: string; analysisRunId: string; sourceSha256: string; createdAt: string; results: CheckResult[] };
 export type ReviewDecision = "confirmed" | "dismissed" | "follow_up";
 export type FindingReview = { id: string; projectId: string; checkRunId: string; resultIndex: number; decision: ReviewDecision; note: string; reviewedAt: string };

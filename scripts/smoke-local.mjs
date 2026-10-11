@@ -79,6 +79,8 @@ try {
   assert.equal(analysis.pageCount, 1);
   assert.equal(analysis.pages[0].pathPaint, 1);
   assert.equal(analysis.pages[0].status, "vector_content");
+  assert.equal(analysis.pages[0].evidence.pathRegionCount, 1);
+  assert.deepEqual(analysis.pages[0].evidence.pathRegions[0], { x: 24, y: 24, width: 252, height: 152 });
   assert.equal((await json(`/api/drawings/${drawing.id}/analysis`)).runId, analysis.runId);
   assert.ok(Buffer.from(await (await fetch(`${base}/api/drawings/${drawing.id}/file`)).arrayBuffer()).equals(vectorPdf));
   await access(path.join(dataDir, "analysis", drawing.id, analysis.runId, "vectors.json"));
@@ -119,6 +121,7 @@ try {
   const secondCheck = await json(`/api/drawings/${drawing.id}/checks`, { method: "POST" }, 201);
   assert.equal(secondCheck.releaseVersion, 2);
   assert.equal(secondCheck.results[0].status, "REVIEW");
+  assert.deepEqual(secondCheck.results[0].evidence.pathRegions, analysis.pages[0].evidence.pathRegions);
   const history = await json(`/api/projects/${project.id}/checks`);
   assert.equal(history.length, 3);
   assert.equal(history.find(run => run.id === firstCheck.id).releaseVersion, 1);
@@ -203,6 +206,7 @@ try {
   assert.equal(finalReport.status, "complete");
   assert.equal(finalReport.summary.confirmed, 1);
   assert.equal(finalReport.findings[0].review.id, confirmed.id);
+  assert.deepEqual(finalReport.findings[0].evidence.pathRegions, []);
   assert.equal((await json(reportsUrl)).find(item => item.id === beforeReview.id).findings[0].review, null);
   assert.equal((await json(reportsUrl)).find(item => item.id === followUpReport.id).findings[0].review.id, followUp.id);
   assert.equal((await json(`/api/projects/${project.id}/checks`)).find(item => item.id === blankCheck.id).results[0].status, "REVIEW");
@@ -216,6 +220,7 @@ try {
   const workflowReport = await json(reportsUrl, reportBody(freshRun.checkRunId), 201);
   assert.equal(workflowReport.workflowVersion, 2);
   assert.equal(workflowReport.workflowSha256, secondWorkflow.sha256);
+  assert.deepEqual(workflowReport.findings[0].evidence.pathRegions, analysis.pages[0].evidence.pathRegions);
   const reviewedWorkflowReport = await json(reportsUrl, reportBody(reusedRun.checkRunId), 201);
   assert.equal(reviewedWorkflowReport.workflowReview.decision, "needs_action");
   assert.equal(reviewedWorkflowReport.workflowReview.note, "Review vector density");
@@ -229,7 +234,7 @@ try {
   assert.equal(list.length, 3);
   const inventory = JSON.parse(await readFile(path.join(dataDir, "analysis", drawing.id, rerun.runId, "vectors.json"), "utf8"));
   assert.equal(inventory.pages[0].path_paint_count, 1);
-  console.log("Local smoke test passed: PDF analysis, rules, workflows, DeepSeek mock advice, per-finding reviews, immutable reports, and safe HTML export.");
+  console.log("Local smoke test passed: PDF regions, rules, workflows, DeepSeek mock advice, per-finding reviews, immutable reports, and safe HTML export.");
 } finally {
   server.kill("SIGTERM");
   await new Promise(resolve => { if (server.exitCode !== null) resolve(); else server.once("exit", resolve); });
