@@ -23,4 +23,5 @@ export function makePdf(content) {
 
 export const vectorPdf = makePdf("0 0 1 RG 25 25 m 275 175 l S\n");
 export const blankPdf = makePdf("");
-export const requirementsPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\n");
+export const requirementsPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 2 MPa) Tj ET\nBT /F1 12 Tf 20 80 Td (TOP VIEW) Tj ET\n");
+export const requirementsVariantPdf = makePdf("BT /F1 12 Tf 20 100 Td (MAX PRESSURE 3 MPa) Tj ET\n");

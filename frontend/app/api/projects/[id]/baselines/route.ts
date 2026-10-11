@@ -1,0 +1,27 @@
+import { learnBaseline } from "@/app/lib/baselines";
+import { failure, readDb } from "@/app/lib/store";
+export const runtime = "nodejs";
+type Context = { params: Promise<{ id: string }> };
+
+export async function GET(_request: Request, { params }: Context) {
+  const { id } = await params;
+  const db = await readDb();
+  if (!db.projects.some(item => item.id === id)) return failure("Project not found", 404);
+  return Response.json({ baselines: db.baselines.filter(item => item.projectId === id).sort((a, b) => b.version - a.version), learningRuns: db.baselineLearningRuns.filter(item => item.projectId === id).slice().reverse() });
+}
+
+export async function POST(request: Request, { params }: Context) {
+  const { id } = await params;
+  let body: unknown;
+  try { body = await request.json(); } catch { return failure("Invalid JSON"); }
+  const drawingId = (body as { drawingId?: unknown } | null)?.drawingId;
+  if (typeof drawingId !== "string" || !drawingId) return failure("Drawing is required");
+  try { return Response.json(await learnBaseline(id, drawingId), { status: 201 }); }
+  catch (error) {
+    const message = (error as Error).message;
+    if (message === "Drawing not found in project") return failure(message, 404);
+    if (["Drawing analysis is required", "Baseline learning already running", "No extractable PDF text", "Analysis text source is invalid"].includes(message)) return failure(message, 409);
+    if (message.startsWith("DeepSeek ")) return failure(message, 502);
+    throw error;
+  }
+}

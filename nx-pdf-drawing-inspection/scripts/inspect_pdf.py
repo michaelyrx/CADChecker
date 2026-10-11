@@ -164,7 +164,25 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
     resources = page.get("/Resources", {})
     xobjects = resources.get("/XObject", {}) if resources else {}
     fonts = resources.get("/Font", {}) if resources else {}
-    text_content = page.extract_text() or ""
+    text_fragments: list[dict[str, Any]] = []
+    text_fragment_count = 0
+
+    def visit_text(text: str, graphics_matrix: list[float], text_matrix: list[float], _font: Any, font_size: float) -> None:
+        nonlocal text_fragment_count
+        if not text.strip():
+            return
+        text_fragment_count += 1
+        if len(text_fragments) >= 300:
+            return
+        try:
+            transform = combine_matrix([float(value) for value in graphics_matrix], [float(value) for value in text_matrix])
+            x, y = display_point(transform[4], transform[5], crop, rotation)
+            if math.isfinite(x) and math.isfinite(y) and math.isfinite(float(font_size)):
+                text_fragments.append({"text": text[:300], "x": round(x, 2), "y": round(y, 2), "font_size": round(float(font_size), 2)})
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    text_content = page.extract_text(visitor_text=visit_text) or ""
 
     return {
         "page": page_number + 1,
@@ -182,6 +200,9 @@ def inventory_page(reader: PdfReader, page_number: int) -> dict[str, Any]:
         "text_operation_count": text_ops,
         "text_content": text_content[:12000],
         "text_truncated": len(text_content) > 12000,
+        "text_fragments": text_fragments,
+        "text_fragment_count": text_fragment_count,
+        "text_fragments_truncated": text_fragment_count > len(text_fragments),
         "xobject_draw_count": image_draws,
         "xobject_names": [str(key) for key in xobjects.keys()],
         "font_names": [str(key) for key in fonts.keys()],

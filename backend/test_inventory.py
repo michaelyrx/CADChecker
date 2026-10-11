@@ -72,6 +72,14 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(page["page"], 1)
         self.assertIn("MAX PRESSURE 2 MPa", page["text_content"])
         self.assertFalse(page["text_truncated"])
+        self.assertEqual(page["text_fragment_count"], 1)
+        self.assertEqual(page["text_fragments"][0]["text"], "MAX PRESSURE 2 MPa")
+        self.assertEqual((page["text_fragments"][0]["x"], page["text_fragments"][0]["y"]), (20.0, 100.0))
+
+    def test_text_origin_accounts_for_crop_and_rotation(self):
+        _, vectors = self.inspect(b"BT /F1 12 Tf 40 100 Td (TOP VIEW) Tj ET\n", "/CropBox [20 40 260 180] /Rotate 90")
+        fragment = vectors["pages"][0]["text_fragments"][0]
+        self.assertEqual((fragment["x"], fragment["y"]), (60.0, 20.0))
 
 
 if __name__ == "__main__":
