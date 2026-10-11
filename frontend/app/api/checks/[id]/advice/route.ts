@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { deepSeekConfig, generateAdvice, promptVersion, type AdviceFacts } from "@/app/lib/deepseek";
+import { aiConfig, generateAdvice, promptVersion, type AdviceFacts } from "@/app/lib/ai";
 import { failure, updateDb, type AdviceAttempt } from "@/app/lib/store";
 export const runtime = "nodejs";
 
@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!rule) throw new Error("Rule source is missing");
       if (db.adviceAttempts.some(item => item.checkRunId === id && item.resultIndex === resultIndex && item.status === "running" && Date.now() - Date.parse(item.createdAt) < 60_000)) throw new Error("Advice already running");
       const facts: AdviceFacts = { scope: "pdf_input_quality_v1", ruleCode: result.ruleCode, metric: rule.metric, ...(result.page ? { page: result.page } : {}), observed: result.observed, threshold: result.threshold, status: "REVIEW" };
-      const item: AdviceAttempt = { id: randomUUID(), projectId: check.projectId, checkRunId: id, resultIndex, language, status: "running", model: deepSeekConfig().model, promptVersion, inputSha256: createHash("sha256").update(JSON.stringify(facts)).digest("hex"), sourceSha256: check.sourceSha256, ruleSha256: check.releaseSha256, createdAt: new Date().toISOString() };
+      const item: AdviceAttempt = { id: randomUUID(), projectId: check.projectId, checkRunId: id, resultIndex, language, status: "running", model: aiConfig().model, provider: aiConfig().provider, promptVersion, inputSha256: createHash("sha256").update(JSON.stringify(facts)).digest("hex"), sourceSha256: check.sourceSha256, ruleSha256: check.releaseSha256, createdAt: new Date().toISOString() };
       db.adviceAttempts.push(item);
       return { attempt: item, facts };
     });
@@ -51,6 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       item.status = "failed"; item.completedAt = new Date().toISOString(); item.durationMs = Date.now() - startedAt; item.error = message;
       return structuredClone(item);
     });
-    return Response.json({ error: message, attemptId: attempt.id }, { status: message === "DeepSeek is not configured" ? 503 : 502 });
+    return Response.json({ error: message, attemptId: attempt.id }, { status: /not configured/.test(message) ? 503 : 502 });
   }
 }

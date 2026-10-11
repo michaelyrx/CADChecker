@@ -52,7 +52,7 @@ await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127
 const mockBase = `http://127.0.0.1:${mock.address().port}`;
 const server = spawn(process.execPath, [nextCli, "start", "--hostname", "127.0.0.1", "--port", String(port)], {
   cwd: path.join(root, "frontend"),
-  env: { ...process.env, CADLINT_DATA_DIR: dataDir, CADLINT_PYTHON: python, DEEPSEEK_API_KEY: "smoke-key", DEEPSEEK_BASE_URL: mockBase, DEEPSEEK_MODEL: "deepseek-flash" },
+  env: { ...process.env, CADLINT_DATA_DIR: dataDir, CADLINT_PYTHON: python, CADLINT_AI_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "smoke-key", DEEPSEEK_BASE_URL: mockBase, DEEPSEEK_MODEL: "deepseek-flash" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let serverOutput = "";
@@ -184,7 +184,7 @@ try {
   const reportBody = checkRunId => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ checkRunId }) });
   assert.deepEqual(await json(reviewsUrl), []);
   assert.deepEqual(await json(adviceUrl), []);
-  assert.deepEqual(await json("/api/ai/status"), { configured: true, model: "deepseek-flash" });
+  assert.deepEqual(await json("/api/ai/status"), { provider: "deepseek", configured: true, model: "deepseek-flash" });
   const adviceBody = (checkRunId, language = "en") => json(`/api/checks/${checkRunId}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language }) }, 201);
   await json(`/api/checks/${firstCheck.id}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language: "en" }) }, 400);
   const firstAdvice = await adviceBody(blankCheck.id);

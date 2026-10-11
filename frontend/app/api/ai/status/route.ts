@@ -1,6 +1,6 @@
-import { deepSeekConfig } from "@/app/lib/deepseek";
+import { aiConfig } from "@/app/lib/ai";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return Response.json(deepSeekConfig(), { headers: { "Cache-Control": "no-store" } });
+  return Response.json(aiConfig(), { headers: { "Cache-Control": "no-store" } });
 }

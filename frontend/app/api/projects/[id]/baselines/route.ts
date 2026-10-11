@@ -20,8 +20,9 @@ export async function POST(request: Request, { params }: Context) {
   catch (error) {
     const message = (error as Error).message;
     if (message === "Drawing not found in project") return failure(message, 404);
-    if (["Drawing analysis is required", "Baseline learning already running", "No readable PDF content", "Analysis text source is invalid", "PDF page rendering failed", "Rendered PDF page is too large"].includes(message)) return failure(message, 409);
-    if (message.startsWith("DeepSeek ")) return failure(message, 502);
+    if (message === "AI provider is not configured") return failure(message, 503);
+    if (["Drawing analysis is required", "Baseline learning already running", "No readable PDF content", "Analysis text source is invalid", "PDF page rendering failed", "PDF region rendering failed", "Invalid rendered JPEG", "Rendered JPEG dimensions are unavailable"].includes(message) || message.startsWith("Rendered PDF region")) return failure(message, 409);
+    if (/^(DeepSeek|Bedrock|AI) /.test(message)) return failure(message, 502);
     throw error;
   }
 }
