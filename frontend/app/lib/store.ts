@@ -13,23 +13,27 @@ export type RuleDraft = { categoryId: string; baseVersion: number; rules: Qualit
 export type RuleRelease = { id: string; categoryId: string; version: number; rules: QualityRule[]; sha256: string; publishedAt: string };
 export type CheckResult = { ruleCode: string; ruleName: string; page?: number; observed: number; threshold: number; status: "PASS" | "REVIEW" };
 export type CheckRun = { id: string; projectId: string; drawingId: string; categoryId: string; releaseId: string; releaseVersion: number; releaseSha256: string; analysisRunId: string; sourceSha256: string; createdAt: string; results: CheckResult[] };
+export type ReviewDecision = "confirmed" | "dismissed" | "follow_up";
+export type FindingReview = { id: string; projectId: string; checkRunId: string; resultIndex: number; decision: ReviewDecision; note: string; reviewedAt: string };
+export type ReportFinding = CheckResult & { review: Pick<FindingReview, "id" | "decision" | "note" | "reviewedAt"> | null };
+export type ReportSnapshot = { id: string; projectId: string; projectName: string; categoryId: string; categoryName: string; drawingId: string; drawingName: string; checkRunId: string; checkCreatedAt: string; ruleVersion: number; ruleSha256: string; analysisRunId: string; sourceSha256: string; workflowRunId?: string; workflowVersion?: number; workflowSha256?: string; workflowReview?: WorkflowRun["review"]; createdAt: string; scope: "pdf_input_quality_v1"; status: "pending_review" | "complete"; summary: { pass: number; review: number; confirmed: number; dismissed: number; followUp: number; pending: number }; findings: ReportFinding[] };
 export type WorkflowConfig = { analysisMode: "reuse" | "fresh"; reviewMode: "on_review" | "always" | "off" };
 export type WorkflowDraft = { projectId: string; baseVersion: number; config: WorkflowConfig; updatedAt: string };
 export type WorkflowRelease = { id: string; projectId: string; version: number; config: WorkflowConfig; sha256: string; publishedAt: string };
 export type WorkflowStep = { key: "analyze" | "check" | "review"; status: "pending" | "running" | "succeeded" | "skipped" | "failed" | "waiting"; startedAt?: string; completedAt?: string; detail?: string };
 export type WorkflowRun = { id: string; projectId: string; drawingId: string; categoryId: string; workflowReleaseId: string; workflowVersion: number; workflowSha256: string; ruleReleaseId: string; ruleVersion: number; ruleSha256: string; createdAt: string; completedAt?: string; status: "running" | "awaiting_review" | "completed" | "failed"; steps: WorkflowStep[]; checkRunId?: string; sourceSha256?: string; analysisRunId?: string; review?: { decision: "accepted" | "needs_action"; note: string; reviewedAt: string } };
-export type Database = { categories: Category[]; projects: Project[]; drawings: Drawing[]; ruleDrafts: RuleDraft[]; ruleReleases: RuleRelease[]; checkRuns: CheckRun[]; workflowDrafts: WorkflowDraft[]; workflowReleases: WorkflowRelease[]; workflowRuns: WorkflowRun[] };
+export type Database = { categories: Category[]; projects: Project[]; drawings: Drawing[]; ruleDrafts: RuleDraft[]; ruleReleases: RuleRelease[]; checkRuns: CheckRun[]; workflowDrafts: WorkflowDraft[]; workflowReleases: WorkflowRelease[]; workflowRuns: WorkflowRun[]; findingReviews: FindingReview[]; reports: ReportSnapshot[] };
 
 export const dataDir = process.env.CADLINT_DATA_DIR || path.join(process.cwd(), ".data");
 const dbFile = path.join(dataDir, "database.json");
-const empty: Database = { categories: [], projects: [], drawings: [], ruleDrafts: [], ruleReleases: [], checkRuns: [], workflowDrafts: [], workflowReleases: [], workflowRuns: [] };
+const empty: Database = { categories: [], projects: [], drawings: [], ruleDrafts: [], ruleReleases: [], checkRuns: [], workflowDrafts: [], workflowReleases: [], workflowRuns: [], findingReviews: [], reports: [] };
 let pending = Promise.resolve();
 
 export async function readDb(): Promise<Database> {
   try {
     const db = JSON.parse(await readFile(dbFile, "utf8"));
     if (!Array.isArray(db.categories) || !Array.isArray(db.projects) || !Array.isArray(db.drawings)) throw new Error("Invalid database");
-    return { ...db, ruleDrafts: Array.isArray(db.ruleDrafts) ? db.ruleDrafts : [], ruleReleases: Array.isArray(db.ruleReleases) ? db.ruleReleases : [], checkRuns: Array.isArray(db.checkRuns) ? db.checkRuns : [], workflowDrafts: Array.isArray(db.workflowDrafts) ? db.workflowDrafts : [], workflowReleases: Array.isArray(db.workflowReleases) ? db.workflowReleases : [], workflowRuns: Array.isArray(db.workflowRuns) ? db.workflowRuns : [] };
+    return { ...db, ruleDrafts: Array.isArray(db.ruleDrafts) ? db.ruleDrafts : [], ruleReleases: Array.isArray(db.ruleReleases) ? db.ruleReleases : [], checkRuns: Array.isArray(db.checkRuns) ? db.checkRuns : [], workflowDrafts: Array.isArray(db.workflowDrafts) ? db.workflowDrafts : [], workflowReleases: Array.isArray(db.workflowReleases) ? db.workflowReleases : [], workflowRuns: Array.isArray(db.workflowRuns) ? db.workflowRuns : [], findingReviews: Array.isArray(db.findingReviews) ? db.findingReviews : [], reports: Array.isArray(db.reports) ? db.reports : [] };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(empty);
     throw error;
