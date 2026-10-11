@@ -1,4 +1,4 @@
-import { verifiedManualFact } from "@/app/lib/baselines";
+import { verifiedManualFacts } from "@/app/lib/baselines";
 import { failure, readDb, updateDb, type DrawingFactKind } from "@/app/lib/store";
 export const runtime = "nodejs";
 
@@ -15,15 +15,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const current = input.action === "add" ? (await readDb()).baselines.find(item => item.id === id) : undefined;
     if (input.action === "add" && !current) return failure("Baseline not found", 404);
-    const added = current ? await verifiedManualFact(current, input.page as number, input.kind as DrawingFactKind, input.quote as string) : null;
+    const added = current ? await verifiedManualFacts(current, input.page as number, input.kind as DrawingFactKind, input.quote as string) : null;
     const baseline = await updateDb(db => {
       const item = db.baselines.find(value => value.id === id);
       if (!item) throw new Error("Baseline not found");
       if (item.status !== "draft") throw new Error("Approved baseline cannot be changed");
       if (input.action === "add") {
-        if (!added) throw new Error("Invalid drawing fact");
-        if (item.facts.some(value => value.page === added.page && value.kind === added.kind && value.quote.toLocaleLowerCase() === added.quote.toLocaleLowerCase())) throw new Error("Fact already exists");
-        item.facts.push(added);
+        if (!added?.length) throw new Error("Invalid drawing fact");
+        const newFacts = added.filter(fact => !item.facts.some(value => value.page === fact.page && value.kind === fact.kind && value.quote.toLocaleLowerCase() === fact.quote.toLocaleLowerCase() && value.textOrigin?.x === fact.textOrigin?.x && value.textOrigin?.y === fact.textOrigin?.y));
+        if (!newFacts.length) throw new Error("Fact already exists");
+        item.facts.push(...newFacts);
       } else if (input.action === "correct") {
         const fact = item.facts.find(value => value.id === input.factId);
         if (!fact) throw new Error("Fact not found");

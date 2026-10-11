@@ -4,10 +4,11 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { aiConfig, requestAiJson } from "./ai";
+import { compareFacts } from "./baseline-diff";
 import { nearbyVectorPaths, type VectorPage } from "./geometry-candidates";
-import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type BaselineDifference, type DrawingFact, type DrawingFactKind, type VisualObservation } from "./store";
+import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type DrawingFact, type DrawingFactKind, type VisualObservation } from "./store";
 
-const promptVersion = "baseline-nearby-paths-v6" as const;
+const promptVersion = "baseline-occurrences-v7" as const;
 const execute = promisify(execFile);
 const kinds: DrawingFactKind[] = ["identity", "view_label", "dimension_text", "gdt_text", "technical_note"];
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -55,7 +56,7 @@ async function sourceText(drawingId: string, analysis: Analysis) {
   let partialText = false;
   for (const item of vectors.pages) {
     if (!Number.isInteger(item.page) || typeof item.text_content !== "string") continue;
-    if (item.text_truncated) partialText = true;
+    if (item.text_truncated || Number(item.text_fragment_count) > (Array.isArray(item.text_fragments) ? item.text_fragments.length : 0)) partialText = true;
     if (normalize(item.text_content).length < 100 && (Number(item.path_paint_count) > 0 || Number(item.xobject_draw_count) > 0)) visionCandidates.push(item.page);
     if (!normalize(item.text_content)) continue;
     const remaining = Math.max(0, 60_000 - used);
@@ -108,7 +109,7 @@ async function preparedInput(drawingId: string, analysis: Analysis) {
       images.push({ page, regionId, rect, jpegBase64: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") });
     }
   }
-  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text }) => ({ page, text })), vectorPages: source.vectorPages.map(({ page, vector_objects }) => ({ page, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, sha256 }) => ({ page, regionId, rect, sha256 })) })).digest("hex");
+  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text, fragments }) => ({ page, text, fragments })), vectorPages: source.vectorPages.map(({ page, vector_objects }) => ({ page, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, sha256 }) => ({ page, regionId, rect, sha256 })) })).digest("hex");
   return { ...source, images, visionResolutionLimited, inputSha256, model: provider === "deepseek" && images.length ? process.env.DEEPSEEK_VISION_MODEL?.trim() || "deepseek-flash" : aiConfig().model };
 }
 
@@ -117,7 +118,7 @@ function validatedFacts(value: unknown, pages: TextPage[], images: VisionImage[]
   const raw = (value as { facts: unknown[] }).facts;
   if (raw.length > 80) throw new Error("DeepSeek returned too many drawing facts");
   const seen = new Set<string>();
-  return raw.map(item => {
+  return raw.flatMap(item => {
     if (!item || typeof item !== "object") throw new Error("DeepSeek returned invalid drawing facts");
     const { page, kind, quote, regionId } = item as { page?: unknown; kind?: unknown; quote?: unknown; regionId?: unknown };
     const pageText = pages.find(value => value.page === page)?.text;
@@ -128,8 +129,9 @@ function validatedFacts(value: unknown, pages: TextPage[], images: VisionImage[]
     const key = `${page}:${kind}:${normalize(quote).toLocaleLowerCase()}:${inText ? "text" : regionId}`;
     if (seen.has(key)) throw new Error("DeepSeek returned duplicate drawing facts");
     seen.add(key);
-    const origin = pages.find(value => value.page === page)?.fragments.find(value => normalize(value.text).includes(normalize(quote)));
-    return { id: randomUUID(), kind: kind as DrawingFactKind, page: Number(page), quote: normalize(quote), review: "pending" as const, confidence: inText ? 0.7 : 0.45, geometryLink: "unresolved" as const, sourceMethod: inText ? "pdf_text" as const : "vision" as const, ...(!inText && region ? { regionId: region.regionId, regionRect: region.rect } : {}), ...(origin ? { textOrigin: { x: origin.x, y: origin.y } } : {}) };
+    const origins = inText ? pages.find(value => value.page === page)?.fragments.filter(value => normalize(value.text).includes(normalize(quote))) || [] : [];
+    const uniqueOrigins = [...new Map(origins.map(origin => [`${origin.x}:${origin.y}`, origin])).values()];
+    return (uniqueOrigins.length ? uniqueOrigins : [undefined]).map(origin => ({ id: randomUUID(), kind: kind as DrawingFactKind, page: Number(page), quote: normalize(quote), review: "pending" as const, confidence: inText ? 0.7 : 0.45, geometryLink: "unresolved" as const, sourceMethod: inText ? "pdf_text" as const : "vision" as const, ...(!inText && region ? { regionId: region.regionId, regionRect: region.rect } : {}), ...(origin ? { textOrigin: { x: origin.x, y: origin.y } } : {}) }));
   });
 }
 
@@ -150,17 +152,20 @@ function validatedObservations(value: unknown, images: VisionImage[]): VisualObs
   });
 }
 
-export async function verifiedManualFact(baseline: Baseline, page: number, kind: DrawingFactKind, quote: string): Promise<DrawingFact> {
+export async function verifiedManualFacts(baseline: Baseline, page: number, kind: DrawingFactKind, quote: string): Promise<DrawingFact[]> {
   if (!Number.isInteger(page) || page < 1 || !kinds.includes(kind) || quote.length < 3 || quote.length > 300) throw new Error("Invalid drawing fact");
   const filename = path.join(dataDir, "analysis", baseline.drawingId, baseline.analysisRunId, "vectors.json");
   const vectors = JSON.parse(await readFile(filename, "utf8"));
   if (vectors.source_sha256 !== baseline.sourceSha256 || !Array.isArray(vectors.pages)) throw new Error("Analysis text source is invalid");
   const source = vectors.pages.find((item: { page?: unknown }) => item.page === page);
   if (!source || typeof source.text_content !== "string" || !normalize(source.text_content).includes(normalize(quote))) throw new Error("Fact quote is not in the PDF text");
-  const origin = Array.isArray(source.text_fragments) ? source.text_fragments.find((item: { text?: unknown }) => typeof item.text === "string" && normalize(item.text).includes(normalize(quote))) : undefined;
-  const fact: DrawingFact = { id: randomUUID(), kind, page, quote: normalize(quote), review: "pending", confidence: 0.9, geometryLink: "unresolved", sourceMethod: "pdf_text", ...(origin && Number.isFinite(origin.x) && Number.isFinite(origin.y) ? { textOrigin: { x: origin.x, y: origin.y } } : {}) };
-  const nearbyPaths = nearbyVectorPaths(fact, vectors.pages);
-  return nearbyPaths.length ? { ...fact, nearbyPaths } : fact;
+  const origins: { x: number; y: number }[] = Array.isArray(source.text_fragments) ? source.text_fragments.filter((item: { text?: unknown; x?: unknown; y?: unknown }) => typeof item.text === "string" && normalize(item.text).includes(normalize(quote)) && Number.isFinite(item.x) && Number.isFinite(item.y)).map((item: { x: number; y: number }) => ({ x: item.x, y: item.y })) : [];
+  const uniqueOrigins = [...new Map(origins.map(origin => [`${origin.x}:${origin.y}`, origin])).values()];
+  return (uniqueOrigins.length ? uniqueOrigins : [undefined]).map(origin => {
+    const fact: DrawingFact = { id: randomUUID(), kind, page, quote: normalize(quote), review: "pending", confidence: 0.9, geometryLink: "unresolved", sourceMethod: "pdf_text", ...(origin ? { textOrigin: { x: origin.x, y: origin.y } } : {}) };
+    const nearbyPaths = nearbyVectorPaths(fact, vectors.pages);
+    return nearbyPaths.length ? { ...fact, nearbyPaths } : fact;
+  });
 }
 
 async function extractFacts(input: Awaited<ReturnType<typeof preparedInput>>) {
@@ -213,7 +218,7 @@ export async function learnBaseline(projectId: string, drawingId: string): Promi
     return updateDb(db => {
       const run = db.baselineLearningRuns.find(item => item.id === started.id)!;
       const version = Math.max(0, ...db.baselines.filter(item => item.projectId === projectId).map(item => item.version)) + 1;
-      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Nearby vector paths are spatial candidates only; geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF content was omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
+      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Nearby vector paths are spatial candidates only; geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF text or text positions were omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
       db.baselines.push(baseline);
       run.status = "succeeded"; run.completedAt = new Date().toISOString(); run.baselineId = baseline.id; run.usage = output.usage;
       return structuredClone(baseline);
@@ -244,17 +249,7 @@ export async function compareWithBaseline(projectId: string, baselineId: string,
   });
   try {
     const output = await extractFacts(input);
-    const remaining = [...output.facts];
-    const differences: BaselineDifference[] = [];
-    for (const fact of source.baseline.facts.filter(item => item.review === "confirmed")) {
-      const index = remaining.findIndex(item => item.kind === fact.kind && normalize(item.quote).toLocaleLowerCase() === normalize(fact.quote).toLocaleLowerCase());
-      if (index < 0) differences.push({ id: randomUUID(), status: "removed", kind: fact.kind, baseline: { id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod }, confidence: 0.7, reviewRequired: true });
-      else {
-        const target = remaining.splice(index, 1)[0];
-        differences.push({ id: randomUUID(), status: target.page === fact.page ? "matched" : "moved", kind: fact.kind, baseline: { id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod }, target: { id: target.id, page: target.page, quote: target.quote, sourceMethod: target.sourceMethod }, confidence: 0.7, reviewRequired: true });
-      }
-    }
-    for (const fact of remaining) differences.push({ id: randomUUID(), status: "added", kind: fact.kind, target: { id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod }, confidence: 0.7, reviewRequired: true });
+    const differences = compareFacts(source.baseline.facts, output.facts);
     return updateDb(db => {
       const run = db.baselineComparisons.find(item => item.id === started.id)!;
       run.status = "succeeded"; run.completedAt = new Date().toISOString(); run.differences = differences; run.targetFacts = output.facts; run.targetObservations = output.observations; run.visionPages = input.visionPageNumbers; run.partialText = input.partialText; run.usage = output.usage;

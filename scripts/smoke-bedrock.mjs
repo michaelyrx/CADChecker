@@ -41,8 +41,9 @@ const mock = createServer(async (request, response) => {
   assert.ok(Buffer.from(image.image.source.bytes, "base64").length > 0);
   sawImage = true;
   const regionId = payload.renderedRegions[0].regionId;
+  const secondRegionId = payload.renderedRegions[1].regionId;
   response.setHeader("Content-Type", "application/json");
-  response.end(JSON.stringify({ output: { message: { role: "assistant", content: [{ text: JSON.stringify({ facts: [{ page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId }], observations: [{ page: 1, regionId: badObservation ? "unknown" : regionId, kind: "feature", description: "One visible diagonal line" }] }) }] } }, stopReason: "end_turn", usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 } }));
+  response.end(JSON.stringify({ output: { message: { role: "assistant", content: [{ text: JSON.stringify({ facts: [{ page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId }, { page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId: secondRegionId }], observations: [{ page: 1, regionId: badObservation ? "unknown" : regionId, kind: "feature", description: "One visible diagonal line" }] }) }] } }, stopReason: "end_turn", usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 } }));
   } catch (error) { console.error(error); response.writeHead(500); response.end("mock failed"); }
 });
 await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127.0.0.1", resolve));
@@ -87,12 +88,14 @@ try {
   assert.equal(baseline.facts[0].quote, "BEDROCK MOCK NOTE");
   assert.equal(baseline.facts[0].sourceMethod, "vision");
   assert.equal(baseline.facts[0].review, "pending");
+  assert.equal(baseline.facts.length, 2);
   assert.equal(baseline.observations[0].kind, "feature");
   assert.equal((await fetch(`${base}/api/baselines/${baseline.id}/regions/${baseline.observations[0].regionId}`)).status, 200);
   const patch = body => ({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await json(`/api/baselines/${baseline.id}`, patch({ action: "approve" }), 409);
   await json(`/api/baselines/${baseline.id}`, patch({ action: "review", factId: baseline.facts[0].id, review: "confirmed" }));
   await json(`/api/baselines/${baseline.id}`, patch({ action: "approve" }), 409);
+  await json(`/api/baselines/${baseline.id}`, patch({ action: "review", factId: baseline.facts[1].id, review: "confirmed" }));
   await json(`/api/baselines/${baseline.id}`, patch({ action: "review-observation", observationId: baseline.observations[0].id, review: "confirmed" }));
   assert.equal((await json(`/api/baselines/${baseline.id}`, patch({ action: "approve" }))).status, "approved");
   const targetForm = new FormData();
@@ -101,6 +104,8 @@ try {
   await json(`/api/drawings/${target.id}/analysis`, { method: "POST" });
   const comparison = await json(`/api/projects/${project.id}/baseline-comparisons`, post({ baselineId: baseline.id, targetDrawingId: target.id }), 201);
   assert.equal(comparison.targetObservations[0].kind, "feature");
+  assert.equal(comparison.differences.length, 4);
+  assert.ok(comparison.differences.every(item => item.status === "ambiguous"));
   assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/regions/${comparison.targetObservations[0].regionId}`)).status, 200);
   assert.ok(sawImage);
   console.log("Bedrock mock smoke test passed: IAM signing, Converse vision, baseline evidence and review gate.");
