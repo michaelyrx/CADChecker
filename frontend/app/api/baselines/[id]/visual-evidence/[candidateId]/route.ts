@@ -1,4 +1,4 @@
-import { visualEvidence } from "@/app/lib/visual-evidence";
+import { RegionIntegrityError, visualEvidence } from "@/app/lib/visual-evidence";
 import { failure, readDb } from "@/app/lib/store";
 
 export const runtime = "nodejs";
@@ -10,5 +10,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!baseline || !candidate) return failure("Visual candidate not found", 404);
   if (!candidate.imageBox) return failure("Visual candidate has no precise location", 409);
   try { return await visualEvidence(baseline, { regionId: candidate.regionId!, imageBox: candidate.imageBox }); }
-  catch { return failure("Visual evidence rendering failed", 422); }
+  catch (error) { return error instanceof RegionIntegrityError ? failure(error.message, 409) : failure("Visual evidence rendering failed", 422); }
 }

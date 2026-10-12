@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -397,6 +397,8 @@ try {
   assert.equal(visionBaseline.facts[0].regionId, "p1-r1");
   assert.ok(visionBaseline.facts[0].regionRect.width > 0);
   assert.equal(visionBaseline.facts[0].sourceMethod, "vision");
+  assert.ok(visionBaseline.imageSetId);
+  assert.match(visionBaseline.regionHashes[visionBaseline.facts[0].regionId], /^[a-f0-9]{64}$/);
   assert.deepEqual(visionBaseline.facts[0].imageBox, { x: 100, y: 150, width: 300, height: 80 });
   const visionEvidence = await fetch(`${base}/api/baselines/${visionBaseline.id}/visual-evidence/${visionBaseline.facts[0].id}`);
   assert.equal(visionEvidence.status, 200);
@@ -405,10 +407,13 @@ try {
   await json(`/api/baselines/${visionBaseline.id}/facts/${visionBaseline.facts[0].id}/evidence`, undefined, 409);
   assert.equal(visionBaseline.facts[0].review, "pending");
   assert.ok(visionBaseline.facts[0].confidence < 0.6);
-  await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", "page-1-overview.jpg"));
+  await access(path.join(dataDir, "analysis", drawing.id, visionBaseline.analysisRunId, "vision", visionBaseline.imageSetId, "page-1-overview.jpg"));
   const regionResponse = await fetch(`${base}/api/baselines/${visionBaseline.id}/regions/${visionBaseline.facts[0].regionId}`);
   assert.equal(regionResponse.status, 200);
   assert.equal(regionResponse.headers.get("content-type"), "image/jpeg");
+  const secondVisionBaseline = await json(baselineUrl, learn(drawing.id), 201);
+  assert.notEqual(secondVisionBaseline.imageSetId, visionBaseline.imageSetId);
+  assert.equal((await fetch(`${base}/api/baselines/${visionBaseline.id}/regions/${visionBaseline.facts[0].regionId}`)).status, 200);
   assert.equal((await json(`/api/baselines/${visionBaseline.id}/regions/p1-r99`, undefined, 404)).error, "PDF region not found");
   const large = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(makePdf("25 25 m 975 675 l S\n", "[0 0 1000 700]"), "large-vector.pdf") }, 201);
   await json(`/api/drawings/${large.id}/analysis`, { method: "POST" });
@@ -419,7 +424,10 @@ try {
   mockMode = "success";
   const tiled = await json(baselineUrl, learn(large.id), 201);
   assert.equal(tiled.facts[0].regionId, "p1-r1");
-  for (let i = 1; i <= 6; i++) await access(path.join(dataDir, "analysis", large.id, tiled.analysisRunId, "vision", `p1-r${i}.jpg`));
+  for (let i = 1; i <= 6; i++) await access(path.join(dataDir, "analysis", large.id, tiled.analysisRunId, "vision", tiled.imageSetId, `p1-r${i}.jpg`));
+  await writeFile(path.join(dataDir, "analysis", large.id, tiled.analysisRunId, "vision", tiled.imageSetId, "p1-r1.jpg"), "changed evidence");
+  await json(`/api/baselines/${tiled.id}/regions/p1-r1`, undefined, 409);
+  await json(`/api/baselines/${tiled.id}/visual-evidence/${tiled.facts[0].id}`, undefined, 409);
   await json(`/api/baselines/${visionBaseline.id}`, baselineAction({ action: "approve" }), 409);
   const correctedVision = await json(`/api/baselines/${visionBaseline.id}`, baselineAction({ action: "correct", factId: visionBaseline.facts[0].id, kind: "technical_note", quote: "CORRECTED VISION NOTE" }));
   assert.equal(correctedVision.facts[0].quote, "CORRECTED VISION NOTE");

@@ -9,7 +9,7 @@ import { nearbyVectorPaths, type VectorPage } from "./geometry-candidates";
 import { jpegDimensions } from "./jpeg";
 import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type DrawingFact, type DrawingFactKind, type ImageBox, type VisualObservation, type VisualPageLocation } from "./store";
 
-const promptVersion = "baseline-visual-page-v9" as const;
+const promptVersion = "baseline-immutable-evidence-v10" as const;
 const execute = promisify(execFile);
 const kinds: DrawingFactKind[] = ["identity", "view_label", "dimension_text", "gdt_text", "technical_note"];
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -65,11 +65,12 @@ async function sourceText(drawingId: string, analysis: Analysis) {
 async function preparedInput(drawingId: string, analysis: Analysis) {
   const source = await sourceText(drawingId, analysis);
   const provider = aiConfig().provider;
+  const imageSetId = randomUUID();
   const images: VisionImage[] = [];
   let visionResolutionLimited = false;
   let imageBytes = 0;
   for (const page of source.visionPageNumbers) {
-    const directory = path.join(dataDir, "analysis", drawingId, analysis.runId!, "vision");
+    const directory = path.join(dataDir, "analysis", drawingId, analysis.runId!, "vision", imageSetId);
     const prefix = path.join(directory, `page-${page}-overview`);
     const pdf = path.join(dataDir, "uploads", `${drawingId}.pdf`);
     await mkdir(directory, { recursive: true });
@@ -97,7 +98,7 @@ async function preparedInput(drawingId: string, analysis: Analysis) {
     }
   }
   const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text, fragments }) => ({ page, text, fragments })), vectorPages: source.vectorPages.map(({ page, display_width, display_height, vector_objects }) => ({ page, display_width, display_height, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, overview, display, sha256 }) => ({ page, regionId, rect, overview, display, sha256 })) })).digest("hex");
-  return { ...source, images, visionResolutionLimited, inputSha256, model: provider === "deepseek" && images.length ? process.env.DEEPSEEK_VISION_MODEL?.trim() || "deepseek-flash" : aiConfig().model };
+  return { ...source, images, imageSetId: images.length ? imageSetId : undefined, regionHashes: Object.fromEntries(images.map(({ regionId, sha256 }) => [regionId, sha256])), visionResolutionLimited, inputSha256, model: provider === "deepseek" && images.length ? process.env.DEEPSEEK_VISION_MODEL?.trim() || "deepseek-flash" : aiConfig().model };
 }
 
 function imageBox(value: unknown) {
@@ -214,7 +215,7 @@ export async function learnBaseline(projectId: string, drawingId: string): Promi
   const started = await updateDb(db => {
     const running = db.baselineLearningRuns.some(item => item.drawingId === drawingId && item.status === "running" && Date.now() - Date.parse(item.startedAt) < 60_000);
     if (running) throw new Error("Baseline learning already running");
-    const run = { id: randomUUID(), projectId, drawingId, analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, status: "running" as const, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, startedAt: new Date().toISOString() };
+    const run = { id: randomUUID(), projectId, drawingId, analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, status: "running" as const, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, imageSetId: input.imageSetId, startedAt: new Date().toISOString() };
     db.baselineLearningRuns.push(run);
     return run;
   });
@@ -223,7 +224,7 @@ export async function learnBaseline(projectId: string, drawingId: string): Promi
     return updateDb(db => {
       const run = db.baselineLearningRuns.find(item => item.id === started.id)!;
       const version = Math.max(0, ...db.baselines.filter(item => item.projectId === projectId).map(item => item.version)) + 1;
-      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Nearby vector paths are spatial candidates only; geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF text or text positions were omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
+      const baseline: Baseline = { id: randomUUID(), projectId, categoryId: source.categoryId, drawingId, version, status: "draft", analysisRunId: source.analysis.runId!, sourceSha256: source.analysis.sha256!, model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, imageSetId: input.imageSetId, regionHashes: input.regionHashes, pagesWithText: input.pages.length, visionPages: input.visionPageNumbers, partialText: input.partialText, facts: output.facts, observations: output.observations, limitations: ["Nearby vector paths are spatial candidates only; geometry features and annotation attachments remain unresolved.", ...(output.observations.length ? ["Visual view, feature and annotation-relation observations are tentative and not linked to verified PDF geometry."] : []), ...(input.visionPageNumbers.length ? ["Facts read from rendered pages are not verifiable against PDF text and require visual confirmation."] : []), ...(input.visionResolutionLimited ? ["Some rendered regions may be downscaled by the vision model; small annotations require direct PDF review."] : []), ...(input.partialText ? ["Some PDF text or text positions were omitted; the baseline may be incomplete."] : [])], createdAt: new Date().toISOString() };
       db.baselines.push(baseline);
       run.status = "succeeded"; run.completedAt = new Date().toISOString(); run.baselineId = baseline.id; run.usage = output.usage;
       return structuredClone(baseline);
@@ -248,7 +249,7 @@ export async function compareWithBaseline(projectId: string, baselineId: string,
   });
   const input = await preparedInput(targetDrawingId, source.analysis);
   const started = await updateDb(db => {
-    const run: BaselineComparison = { id: randomUUID(), projectId, baselineId, baselineVersion: source.baseline.version, baselineSha256: source.baseline.sourceSha256, targetDrawingId, targetAnalysisRunId: source.analysis.runId!, targetSha256: source.analysis.sha256!, status: "running", model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, startedAt: new Date().toISOString() };
+    const run: BaselineComparison = { id: randomUUID(), projectId, baselineId, baselineVersion: source.baseline.version, baselineSha256: source.baseline.sourceSha256, targetDrawingId, targetAnalysisRunId: source.analysis.runId!, targetSha256: source.analysis.sha256!, status: "running", model: input.model, provider: aiConfig().provider, promptVersion, inputSha256: input.inputSha256, imageSetId: input.imageSetId, regionHashes: input.regionHashes, startedAt: new Date().toISOString() };
     db.baselineComparisons.push(run);
     return run;
   });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -115,10 +115,15 @@ try {
   assert.equal(comparison.differences[0].confidence, 0.4);
   shiftedBox = true;
   const shiftedComparison = await json(`/api/projects/${project.id}/baseline-comparisons`, post({ baselineId: baseline.id, targetDrawingId: target.id }), 201);
+  assert.notEqual(shiftedComparison.imageSetId, comparison.imageSetId);
   assert.deepEqual(shiftedComparison.differences.map(item => item.status), ["position_changed", "ambiguous"]);
   assert.equal(comparison.differences[0].status, "matched");
   assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/visual-evidence/${comparison.targetObservations[0].id}`)).status, 200);
   assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/regions/${comparison.targetObservations[0].regionId}`)).status, 200);
+  await writeFile(path.join(work, "data", "analysis", target.id, shiftedComparison.targetAnalysisRunId, "vision", shiftedComparison.imageSetId, "p1-r1.jpg"), "changed evidence");
+  await json(`/api/baseline-comparisons/${shiftedComparison.id}/regions/p1-r1`, undefined, 409);
+  await json(`/api/baseline-comparisons/${shiftedComparison.id}/visual-evidence/${shiftedComparison.targetObservations[0].id}`, undefined, 409);
+  assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/regions/p1-r1`)).status, 200);
   assert.ok(sawImage);
   console.log("Bedrock mock smoke test passed: IAM signing, Converse vision, baseline evidence and review gate.");
 } catch (error) {
