@@ -388,6 +388,17 @@ try {
   assert.deepEqual(comparison.differences.map(item => item.status).sort(), ["added", "removed", "removed"]);
   assert.equal(comparison.baselineSha256, noteAnalysis.sha256);
   assert.equal(comparison.targetFacts[0].quote, "MAX PRESSURE 3 MPa");
+  const feedbackUrl = `/api/baseline-comparisons/${comparison.id}/feedback`;
+  const feedbackBody = (targetId, label, note) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetType: "difference", targetId, label, note }) });
+  assert.deepEqual(await json(feedbackUrl), []);
+  await json(feedbackUrl, feedbackBody("unknown", "true_positive", "Checked source PDF"), 404);
+  await json(feedbackUrl, feedbackBody(comparison.differences[0].id, "unsupported", "Checked source PDF"), 400);
+  const firstFeedback = await json(feedbackUrl, feedbackBody(comparison.differences[0].id, "true_positive", "Checked source PDF"), 201);
+  assert.equal(firstFeedback.comparisonId, comparison.id);
+  const revisedFeedback = await json(feedbackUrl, feedbackBody(comparison.differences[0].id, "accepted_variant", "Approved layout variant"), 201);
+  assert.notEqual(firstFeedback.id, revisedFeedback.id);
+  assert.deepEqual((await json(feedbackUrl)).map(item => item.label), ["true_positive", "accepted_variant"]);
+  assert.deepEqual((await json(compareUrl)).find(item => item.id === comparison.id).differences, comparison.differences);
   const targetEvidence = await fetch(`${base}/api/baseline-comparisons/${comparison.id}/facts/${comparison.targetFacts[0].id}/evidence`);
   assert.equal(targetEvidence.status, 200);
   assert.match(await targetEvidence.text(), /data:image\/jpeg;base64,/);

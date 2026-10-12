@@ -126,6 +126,9 @@ try {
   await json(`/api/drawings/${target.id}/analysis`, { method: "POST" });
   const comparison = await json(`/api/projects/${project.id}/baseline-comparisons`, post({ baselineId: baseline.id, targetDrawingId: target.id }), 201);
   assert.equal(comparison.targetObservations[0].kind, "feature");
+  const observationFeedback = await json(`/api/baseline-comparisons/${comparison.id}/feedback`, post({ targetType: "observation", targetId: comparison.targetObservations[0].id, label: "needs_clarification", note: "Feature needs direct PDF review" }), 201);
+  assert.equal(observationFeedback.targetType, "observation");
+  assert.equal((await json(`/api/baseline-comparisons/${comparison.id}/feedback`)).length, 1);
   assert.deepEqual(comparison.differences.map(item => item.status), ["matched", "ambiguous"]);
   assert.equal(comparison.differences[0].confidence, 0.4);
   shiftedBox = true;
