@@ -7,14 +7,14 @@ import { aiConfig, requestAiJson } from "./ai";
 import { compareFacts } from "./baseline-diff";
 import { nearbyVectorPaths, type VectorPage } from "./geometry-candidates";
 import { jpegDimensions } from "./jpeg";
-import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type DrawingFact, type DrawingFactKind, type VisualObservation } from "./store";
+import { dataDir, updateDb, type Analysis, type Baseline, type BaselineComparison, type DrawingFact, type DrawingFactKind, type ImageBox, type VisualObservation, type VisualPageLocation } from "./store";
 
-const promptVersion = "baseline-visual-boxes-v8" as const;
+const promptVersion = "baseline-visual-page-v9" as const;
 const execute = promisify(execFile);
 const kinds: DrawingFactKind[] = ["identity", "view_label", "dimension_text", "gdt_text", "technical_note"];
 const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
 type TextPage = { page: number; text: string; fragments: { text: string; x: number; y: number }[] };
-type VisionImage = { page: number; regionId: string; rect: { x: number; y: number; width: number; height: number }; jpegBase64: string; sha256: string };
+type VisionImage = { page: number; regionId: string; rect: { x: number; y: number; width: number; height: number }; overview: { width: number; height: number }; display: { width: number; height: number }; jpegBase64: string; sha256: string };
 
 function tileRects(width: number, height: number) {
   const columns = Math.min(3, Math.max(1, Math.ceil(width / 1300)));
@@ -92,10 +92,11 @@ async function preparedInput(drawingId: string, analysis: Analysis) {
       imageBytes += bytes.length;
       if (imageBytes > 30 * 1024 * 1024) throw new Error("Rendered PDF regions exceed the DeepSeek request size budget");
       if (rect.width * rect.height > 1300 * 1300) visionResolutionLimited = true;
-      images.push({ page, regionId, rect, jpegBase64: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") });
+      const vectorPage = source.vectorPages.find(item => item.page === page);
+      images.push({ page, regionId, rect, overview: { width, height }, display: { width: Number(vectorPage?.display_width), height: Number(vectorPage?.display_height) }, jpegBase64: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") });
     }
   }
-  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text, fragments }) => ({ page, text, fragments })), vectorPages: source.vectorPages.map(({ page, vector_objects }) => ({ page, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, sha256 }) => ({ page, regionId, rect, sha256 })) })).digest("hex");
+  const inputSha256 = createHash("sha256").update(JSON.stringify({ pages: source.pages.map(({ page, text, fragments }) => ({ page, text, fragments })), vectorPages: source.vectorPages.map(({ page, display_width, display_height, vector_objects }) => ({ page, display_width, display_height, paths: vector_objects?.map(item => ({ id: item.id, bbox: item.bbox })) })), images: images.map(({ page, regionId, rect, overview, display, sha256 }) => ({ page, regionId, rect, overview, display, sha256 })) })).digest("hex");
   return { ...source, images, visionResolutionLimited, inputSha256, model: provider === "deepseek" && images.length ? process.env.DEEPSEEK_VISION_MODEL?.trim() || "deepseek-flash" : aiConfig().model };
 }
 
@@ -105,6 +106,13 @@ function imageBox(value: unknown) {
   const [x, y, width, height] = value as number[];
   if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1000 || y + height > 1000) throw new Error("AI returned visual location outside its region");
   return { x, y, width, height };
+}
+
+function visualPageLocation(image: VisionImage, box: ImageBox | undefined): VisualPageLocation | undefined {
+  if (!box || !Number.isFinite(image.display.width) || !Number.isFinite(image.display.height) || image.display.width <= 0 || image.display.height <= 0) return undefined;
+  const scaleX = image.display.width / image.overview.width;
+  const scaleY = image.display.height / image.overview.height;
+  return { box: { x: (image.rect.x + box.x * image.rect.width / 1000) * scaleX, y: (image.rect.y + box.y * image.rect.height / 1000) * scaleY, width: box.width * image.rect.width * scaleX / 1000, height: box.height * image.rect.height * scaleY / 1000 }, pageWidth: image.display.width, pageHeight: image.display.height };
 }
 
 function validatedFacts(value: unknown, pages: TextPage[], images: VisionImage[]): DrawingFact[] {
@@ -127,7 +135,7 @@ function validatedFacts(value: unknown, pages: TextPage[], images: VisionImage[]
     seen.add(key);
     const origins = inText ? pages.find(value => value.page === page)?.fragments.filter(value => normalize(value.text).includes(normalize(quote))) || [] : [];
     const uniqueOrigins = [...new Map(origins.map(origin => [`${origin.x}:${origin.y}`, origin])).values()];
-    return (uniqueOrigins.length ? uniqueOrigins : [undefined]).map(origin => ({ id: randomUUID(), kind: kind as DrawingFactKind, page: Number(page), quote: normalize(quote), review: "pending" as const, confidence: inText ? 0.7 : 0.45, geometryLink: "unresolved" as const, sourceMethod: inText ? "pdf_text" as const : "vision" as const, ...(!inText && region ? { regionId: region.regionId, regionRect: region.rect } : {}), ...(box ? { imageBox: box } : {}), ...(origin ? { textOrigin: { x: origin.x, y: origin.y } } : {}) }));
+    return (uniqueOrigins.length ? uniqueOrigins : [undefined]).map(origin => ({ id: randomUUID(), kind: kind as DrawingFactKind, page: Number(page), quote: normalize(quote), review: "pending" as const, confidence: inText ? 0.7 : 0.45, geometryLink: "unresolved" as const, sourceMethod: inText ? "pdf_text" as const : "vision" as const, ...(!inText && region ? { regionId: region.regionId, regionRect: region.rect } : {}), ...(box ? { imageBox: box, ...(region ? { visualPageLocation: visualPageLocation(region, box) } : {}) } : {}), ...(origin ? { textOrigin: { x: origin.x, y: origin.y } } : {}) }));
   });
 }
 
@@ -145,7 +153,7 @@ function validatedObservations(value: unknown, images: VisionImage[]): VisualObs
     const key = `${regionId}:${kind}:${normalize(description).toLocaleLowerCase()}:${box ? JSON.stringify(box) : ""}`;
     if (seen.has(key)) throw new Error("AI returned duplicate visual observations");
     seen.add(key);
-    return { id: randomUUID(), page: Number(page), regionId: region.regionId, regionRect: region.rect, kind: kind as VisualObservation["kind"], description: normalize(description), confidence: 0.35, review: "pending" as const, geometryLink: "unresolved" as const, ...(box ? { imageBox: box } : {}) };
+    return { id: randomUUID(), page: Number(page), regionId: region.regionId, regionRect: region.rect, kind: kind as VisualObservation["kind"], description: normalize(description), confidence: 0.35, review: "pending" as const, geometryLink: "unresolved" as const, ...(box ? { imageBox: box, visualPageLocation: visualPageLocation(region, box) } : {}) };
   });
 }
 

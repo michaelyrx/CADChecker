@@ -1,6 +1,6 @@
 import type { DrawingFact, EvidenceRegion } from "./store";
 
-export type VectorPage = { page: number; vector_objects?: { id?: unknown; bbox?: unknown }[] };
+export type VectorPage = { page: number; display_width?: number; display_height?: number; vector_objects?: { id?: unknown; bbox?: unknown }[] };
 
 function validBox(value: unknown): value is EvidenceRegion {
   if (!value || typeof value !== "object") return false;

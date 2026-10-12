@@ -2,8 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { BaselineDifference, DrawingFact } from "./store";
 
 const key = (fact: DrawingFact) => `${fact.kind}:${fact.quote.replace(/\s+/g, " ").trim().toLocaleLowerCase()}`;
-const reference = (fact: DrawingFact) => ({ id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod, textOrigin: fact.textOrigin, imageBox: fact.imageBox });
-const distance = (a: DrawingFact, b: DrawingFact) => a.textOrigin && b.textOrigin ? Math.hypot(a.textOrigin.x - b.textOrigin.x, a.textOrigin.y - b.textOrigin.y) : 0;
+const reference = (fact: DrawingFact) => ({ id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod, textOrigin: fact.textOrigin, imageBox: fact.imageBox, visualPageLocation: fact.visualPageLocation });
+const center = (fact: DrawingFact) => fact.textOrigin || (fact.visualPageLocation ? { x: fact.visualPageLocation.box.x + fact.visualPageLocation.box.width / 2, y: fact.visualPageLocation.box.y + fact.visualPageLocation.box.height / 2 } : undefined);
+const distance = (a: DrawingFact, b: DrawingFact) => {
+  const from = center(a);
+  const to = center(b);
+  return from && to ? Math.hypot(from.x - to.x, from.y - to.y) : 0;
+};
+const comparable = (a: DrawingFact, b: DrawingFact) => {
+  if (a.sourceMethod !== "vision" && b.sourceMethod !== "vision") return !!a.textOrigin && !!b.textOrigin;
+  const left = a.visualPageLocation;
+  const right = b.visualPageLocation;
+  return a.sourceMethod === "vision" && b.sourceMethod === "vision" && !!left && !!right && Math.abs(left.pageWidth - right.pageWidth) <= 1 && Math.abs(left.pageHeight - right.pageHeight) <= 1;
+};
 const cost = (a: DrawingFact, b: DrawingFact) => (a.page === b.page ? 0 : 1_000_000_000 + Math.abs(a.page - b.page) * 1_000_000) + Math.min(distance(a, b), 100_000);
 
 function optimalPairs(baseline: DrawingFact[], target: DrawingFact[]) {
@@ -57,7 +68,7 @@ export function compareFacts(baselineFacts: DrawingFact[], targetFacts: DrawingF
   for (const group of groups.values()) {
     const baseline = [...group.baseline];
     const target = [...group.target];
-    if (baseline.length && target.length && [...baseline, ...target].some(fact => !fact.textOrigin)) {
+    if (baseline.length && target.length && !baseline.every(original => target.every(candidate => comparable(original, candidate)))) {
       if (baseline.length === 1 && target.length === 1) {
         differences.push({ id: randomUUID(), status: "ambiguous", kind: baseline[0].kind, baseline: reference(baseline[0]), target: reference(target[0]), confidence: 0.35, reviewRequired: true });
         continue;
@@ -72,8 +83,8 @@ export function compareFacts(baselineFacts: DrawingFact[], targetFacts: DrawingF
     for (const pair of pairs) {
       const original = baseline[pair.baseline];
       const candidate = target[pair.target];
-      const status = original.page !== candidate.page ? "moved" : original.textOrigin && candidate.textOrigin && distance(original, candidate) > 24 ? "position_changed" : "matched";
-      differences.push({ id: randomUUID(), status, kind: original.kind, baseline: reference(original), target: reference(candidate), confidence: status === "position_changed" ? 0.6 : 0.7, reviewRequired: true });
+      const status = original.page !== candidate.page ? "moved" : distance(original, candidate) > 24 ? "position_changed" : "matched";
+      differences.push({ id: randomUUID(), status, kind: original.kind, baseline: reference(original), target: reference(candidate), confidence: original.sourceMethod === "vision" ? 0.4 : status === "position_changed" ? 0.6 : 0.7, reviewRequired: true });
     }
     for (const [index, fact] of baseline.entries()) if (!matchedBaseline.has(index)) differences.push({ id: randomUUID(), status: "removed", kind: fact.kind, baseline: reference(fact), confidence: 0.7, reviewRequired: true });
     for (const [index, fact] of target.entries()) if (!matchedTarget.has(index)) differences.push({ id: randomUUID(), status: "added", kind: fact.kind, target: reference(fact), confidence: 0.7, reviewRequired: true });
