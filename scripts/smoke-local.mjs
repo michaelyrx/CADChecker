@@ -38,6 +38,12 @@ const mock = createServer(async (request, response) => {
     response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ ok: mockMode !== "probe-invalid" }) } }] }));
     return;
   }
+  if (typeof facts.currentText === "string") {
+    assert.equal(vision, false);
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ suggestedText: mockMode === "suggestion-invalid" ? "Maximum permitted pressure: 3 MPa" : `Maximum permitted pressure: ${facts.currentText.includes("2.5") ? "2.5" : "2"} MPa`, rationale: "Clearer wording; keep the same limit." }) } }], usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } }));
+    return;
+  }
   const requirements = Array.isArray(facts.pages);
   const baselineFacts = input.messages[0].content.includes("visible textual facts");
   if (vision) {
@@ -292,6 +298,20 @@ try {
   assert.equal(acceptedRule.text, "Maximum pressure: 2 MPa");
   assert.equal(acceptedRule.revision, 2);
   assert.equal(acceptedRule.history[0].text, "MAX PRESSURE 2 MPa");
+  const suggestionUrl = `/api/engineering-rules/${candidate.id}/suggestions`;
+  const suggest = expectedRevision => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instruction: "Make the wording clearer", expectedRevision }) });
+  assert.deepEqual(await json(suggestionUrl), []);
+  await json(suggestionUrl, suggest(1), 409);
+  mockMode = "suggestion-invalid";
+  await json(suggestionUrl, suggest(2), 502);
+  mockMode = "success";
+  const suggestion = await json(suggestionUrl, suggest(2), 201);
+  assert.equal(suggestion.proposedText, "Maximum permitted pressure: 2 MPa");
+  assert.equal(suggestion.provider, "deepseek");
+  assert.equal(suggestion.usage.totalTokens, 30);
+  assert.deepEqual((await json(suggestionUrl)).map(item => item.status), ["succeeded", "failed"]);
+  assert.equal((await json(engineeringUrl))[0].text, acceptedRule.text);
+  await json(`/api/engineering-rules/${candidate.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "accepted", text: suggestion.proposedText, expectedRevision: 1 }) }, 409);
   const engineeringCheck = await json(`/api/drawings/${noteDrawing.id}/checks`, { method: "POST" }, 201);
   assert.equal(engineeringCheck.requirements.length, 1);
   assert.equal(engineeringCheck.requirements[0].text, "Maximum pressure: 2 MPa");
@@ -328,6 +348,11 @@ try {
   assert.match(invalidExtraction.error, /unverified source text/);
   assert.equal((await json(engineeringUrl))[0].text, "Maximum pressure: 2.5 MPa");
   assert.equal((await json(ruleUrl)).latest.sha256, secondRelease.sha256);
+  const currentSuggestion = await json(suggestionUrl, suggest(3), 201);
+  assert.equal(currentSuggestion.proposedText, "Maximum permitted pressure: 2.5 MPa");
+  const applied = await json(`/api/engineering-rules/${candidate.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "accepted", text: currentSuggestion.proposedText, expectedRevision: 3 }) });
+  assert.equal(applied.revision, 4);
+  assert.equal((await json(reportsUrl)).find(item => item.id === engineeringReport.id).requirements[0].text, "Maximum pressure: 2 MPa");
   mockMode = "success";
   const baselineUrl = `/api/projects/${project.id}/baselines`;
   const compareUrl = `/api/projects/${project.id}/baseline-comparisons`;
