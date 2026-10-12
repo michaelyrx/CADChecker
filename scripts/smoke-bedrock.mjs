@@ -76,6 +76,10 @@ try {
   assert.equal(status.provider, "bedrock");
   assert.equal(status.configured, true);
   assert.equal(status.model, "mock.model");
+  assert.equal(status.providers.deepseek.configured, false);
+  assert.equal((await json("/api/ai/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "deepseek" }) })).configured, false);
+  assert.equal((await json("/api/ai/status")).provider, "deepseek");
+  assert.equal((await json("/api/ai/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "bedrock" }) })).configured, true);
   const category = await json("/api/categories", post({ name: "Bedrock category" }), 201);
   const project = await json("/api/projects", post({ name: "Bedrock project", categoryId: category.id }), 201);
   const form = new FormData();

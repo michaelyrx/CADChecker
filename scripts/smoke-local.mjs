@@ -80,6 +80,12 @@ function uploadBody(bytes, name) {
 
 try {
   await waitForServer();
+  const aiStatus = await json("/api/ai/status");
+  assert.equal(aiStatus.provider, "deepseek");
+  assert.equal(aiStatus.source, "environment");
+  assert.equal(aiStatus.providers.deepseek.configured, true);
+  assert.equal(aiStatus.providers.bedrock.configured, false);
+  await json("/api/ai/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "invalid" }) }, 400);
   assert.deepEqual(await json("/api/categories"), []);
   assert.deepEqual(await json("/api/projects"), []);
   const category = await json("/api/categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Verification category" }) }, 201);
@@ -88,6 +94,12 @@ try {
   const drawing = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(vectorPdf, "vector-line.pdf") }, 201);
   const analysis = await json(`/api/drawings/${drawing.id}/analysis`, { method: "POST" });
   assert.equal(analysis.status, "succeeded");
+  const selectProvider = provider => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) });
+  assert.equal((await json("/api/ai/status", selectProvider("bedrock"))).configured, false);
+  assert.equal((await json("/api/ai/status")).provider, "bedrock");
+  await json(`/api/projects/${project.id}/baselines`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drawingId: drawing.id }) }, 503);
+  assert.equal((await json("/api/ai/status", selectProvider("deepseek"))).configured, true);
+  assert.equal((await json("/api/ai/status")).source, "saved");
   assert.equal(analysis.pageCount, 1);
   assert.equal(analysis.pages[0].pathPaint, 1);
   assert.equal(analysis.pages[0].status, "vector_content");
@@ -184,7 +196,7 @@ try {
   const reportBody = checkRunId => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ checkRunId }) });
   assert.deepEqual(await json(reviewsUrl), []);
   assert.deepEqual(await json(adviceUrl), []);
-  assert.deepEqual(await json("/api/ai/status"), { provider: "deepseek", configured: true, model: "deepseek-flash" });
+  assert.equal((await json("/api/ai/status")).model, "deepseek-flash");
   const adviceBody = (checkRunId, language = "en") => json(`/api/checks/${checkRunId}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language }) }, 201);
   await json(`/api/checks/${firstCheck.id}/advice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultIndex: 0, language: "en" }) }, 400);
   const firstAdvice = await adviceBody(blankCheck.id);

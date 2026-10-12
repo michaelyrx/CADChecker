@@ -12,6 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (input?.language !== "zh-CN" && input?.language !== "en") return failure("Invalid language");
   const resultIndex = Number(input.resultIndex);
   const language = input.language;
+  const config = await aiConfig();
   let started;
   try {
     started = await updateDb(db => {
@@ -24,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!rule) throw new Error("Rule source is missing");
       if (db.adviceAttempts.some(item => item.checkRunId === id && item.resultIndex === resultIndex && item.status === "running" && Date.now() - Date.parse(item.createdAt) < 60_000)) throw new Error("Advice already running");
       const facts: AdviceFacts = { scope: "pdf_input_quality_v1", ruleCode: result.ruleCode, metric: rule.metric, ...(result.page ? { page: result.page } : {}), observed: result.observed, threshold: result.threshold, status: "REVIEW" };
-      const item: AdviceAttempt = { id: randomUUID(), projectId: check.projectId, checkRunId: id, resultIndex, language, status: "running", model: aiConfig().model, provider: aiConfig().provider, promptVersion, inputSha256: createHash("sha256").update(JSON.stringify(facts)).digest("hex"), sourceSha256: check.sourceSha256, ruleSha256: check.releaseSha256, createdAt: new Date().toISOString() };
+      const item: AdviceAttempt = { id: randomUUID(), projectId: check.projectId, checkRunId: id, resultIndex, language, status: "running", model: config.model, provider: config.provider, promptVersion, inputSha256: createHash("sha256").update(JSON.stringify(facts)).digest("hex"), sourceSha256: check.sourceSha256, ruleSha256: check.releaseSha256, createdAt: new Date().toISOString() };
       db.adviceAttempts.push(item);
       return { attempt: item, facts };
     });
@@ -37,7 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   const startedAt = Date.now();
   try {
-    const output = await generateAdvice(started.facts, language);
+    const output = await generateAdvice(started.facts, language, config.provider);
     const attempt = await updateDb(db => {
       const item = db.adviceAttempts.find(value => value.id === started.attempt.id)!;
       item.status = "succeeded"; item.completedAt = new Date().toISOString(); item.durationMs = Date.now() - startedAt; item.content = output.content; item.usage = output.usage;

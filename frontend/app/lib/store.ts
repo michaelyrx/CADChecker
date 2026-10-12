@@ -4,6 +4,8 @@ import path from "node:path";
 
 export type Category = { id: string; name: string; createdAt: string };
 export type Project = { id: string; name: string; code: string; description: string; categoryId: string; createdAt: string };
+export type AiProvider = "deepseek" | "bedrock";
+export type SystemSettings = { aiProvider: AiProvider; updatedAt: string };
 export type EvidenceRegion = { x: number; y: number; width: number; height: number };
 export type PageEvidence = { width: number; height: number; rotation: number; pathRegionCount: number; pathRegions: EvidenceRegion[] };
 export type PageInventory = { page: number; pathConstruction: number; pathPaint: number; textOperations: number; xobjectDraws: number; status: "vector_content" | "undetermined"; evidence?: PageEvidence };
@@ -43,7 +45,7 @@ export type WorkflowDraft = { projectId: string; baseVersion: number; config: Wo
 export type WorkflowRelease = { id: string; projectId: string; version: number; config: WorkflowConfig; sha256: string; publishedAt: string };
 export type WorkflowStep = { key: "analyze" | "check" | "review"; status: "pending" | "running" | "succeeded" | "skipped" | "failed" | "waiting"; startedAt?: string; completedAt?: string; detail?: string };
 export type WorkflowRun = { id: string; projectId: string; drawingId: string; categoryId: string; workflowReleaseId: string; workflowVersion: number; workflowSha256: string; ruleReleaseId: string; ruleVersion: number; ruleSha256: string; createdAt: string; completedAt?: string; status: "running" | "awaiting_review" | "completed" | "failed"; steps: WorkflowStep[]; checkRunId?: string; sourceSha256?: string; analysisRunId?: string; review?: { decision: "accepted" | "needs_action"; note: string; reviewedAt: string } };
-export type Database = { categories: Category[]; projects: Project[]; drawings: Drawing[]; ruleDrafts: RuleDraft[]; ruleReleases: RuleRelease[]; checkRuns: CheckRun[]; workflowDrafts: WorkflowDraft[]; workflowReleases: WorkflowRelease[]; workflowRuns: WorkflowRun[]; findingReviews: FindingReview[]; requirementReviews: RequirementReview[]; reports: ReportSnapshot[]; adviceAttempts: AdviceAttempt[]; engineeringRules: EngineeringRule[]; requirementExtractions: RequirementExtraction[]; baselines: Baseline[]; baselineLearningRuns: BaselineLearningRun[]; baselineComparisons: BaselineComparison[] };
+export type Database = { systemSettings?: SystemSettings; categories: Category[]; projects: Project[]; drawings: Drawing[]; ruleDrafts: RuleDraft[]; ruleReleases: RuleRelease[]; checkRuns: CheckRun[]; workflowDrafts: WorkflowDraft[]; workflowReleases: WorkflowRelease[]; workflowRuns: WorkflowRun[]; findingReviews: FindingReview[]; requirementReviews: RequirementReview[]; reports: ReportSnapshot[]; adviceAttempts: AdviceAttempt[]; engineeringRules: EngineeringRule[]; requirementExtractions: RequirementExtraction[]; baselines: Baseline[]; baselineLearningRuns: BaselineLearningRun[]; baselineComparisons: BaselineComparison[] };
 
 export const dataDir = process.env.CADLINT_DATA_DIR || path.join(process.cwd(), ".data");
 const dbFile = path.join(dataDir, "database.json");
