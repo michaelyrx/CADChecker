@@ -15,7 +15,7 @@
 
 `local-setup.sh` 会安装 Node/Python 依赖、运行解析测试和正式构建、生成样例 PDF，并用临时数据目录完成接口自检；不会向正式验证数据预置项目。再次自检可运行 `node scripts/smoke-local.mjs`。需要更换端口时设置 `CADLINT_PORT`，例如 `CADLINT_PORT=3200 ./scripts/local-start.sh`。
 
-服务端 AI 默认使用 DeepSeek：设置 `DEEPSEEK_API_KEY`，可用 `DEEPSEEK_MODEL` 和 `DEEPSEEK_VISION_MODEL` 指定模型。也可配置 `AWS_REGION` 和支持图片输入的 `BEDROCK_MODEL_ID`，由 AWS SDK 使用部署环境的 IAM 角色或标准 AWS 凭证调用 Bedrock Converse。顶部“系统配置”可在 DeepSeek 与 Bedrock 之间选择全局启用服务；选择保存在应用数据中，重启后仍有效，并优先于 `CADLINT_AI_PROVIDER` 启动默认值。切换只影响新 AI 任务，既有记录保留原服务和模型信息。浏览器不会收到密钥。`/api/ai/status` 的“已配置”仅表示必要环境变量齐全，不代表账户已开通模型或真实请求已验收。未配置时仍可运行确定性规则和人工复核。两种接口的本地自检都使用模拟服务，不调用真实模型；部署后需以真实账户验证权限、费用和准确率。配置示例见 `frontend/.env.example`。
+服务端 AI 默认使用 DeepSeek：设置 `DEEPSEEK_API_KEY`，可用 `DEEPSEEK_MODEL` 和 `DEEPSEEK_VISION_MODEL` 指定模型。也可配置 `AWS_REGION` 和支持图片输入的 `BEDROCK_MODEL_ID`，由 AWS SDK 使用部署环境的 IAM 角色或标准 AWS 凭证调用 Bedrock Converse。顶部“系统配置”可在 DeepSeek 与 Bedrock 之间选择全局启用服务；选择保存在应用数据中，重启后仍有效，并优先于 `CADLINT_AI_PROVIDER` 启动默认值。切换只影响新 AI 任务，既有记录保留原服务和模型信息。浏览器不会收到密钥。`/api/ai/status` 的“已配置”仅表示必要环境变量齐全；可在页面点击“测试当前服务连接”，由服务端调用当前模型并验证固定 JSON 回复，测试不上传图纸。连接成功仍不代表图纸解析准确率已验证。未配置时仍可运行确定性规则和人工复核。两种接口的本地自检都使用模拟服务，不调用真实模型；部署后需以真实账户验证权限、费用和准确率。配置示例见 `frontend/.env.example`。
 
 可创建产品类别和项目，上传 PDF、查看项目图纸列表与预览。选择图纸后点击“分析矢量内容”，应用会复用仓库中的 Python POC 脚本，记录每页路径绘制、文字操作、XObject 调用数量及文件校验值；另将可直接读取的线段、贝塞尔曲线和矩形按显示坐标保存为矢量对象（每页最多 20,000 个对象、每对象最多 200 个绘图命令，并明确标记截断）。Form XObject 内部几何暂未展开。在“产品类别与规则”中可编辑草稿、发布版本；同类别项目复用最新发布版本。在“检查任务”中可以对已分析图纸单独运行输入质量检查。
 

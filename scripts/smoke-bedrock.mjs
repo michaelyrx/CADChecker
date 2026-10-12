@@ -35,6 +35,12 @@ const mock = createServer(async (request, response) => {
   assert.equal(body.modelId, undefined);
   assert.equal(body.messages[0].role, "user");
   const payload = JSON.parse(body.messages[0].content[0].text);
+  if (payload.probe === "cadlint-connection-check-v1") {
+    assert.equal(body.messages[0].content.length, 1);
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ output: { message: { role: "assistant", content: [{ text: JSON.stringify({ ok: true }) }] } }, stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }));
+    return;
+  }
   const image = body.messages[0].content.find(item => item.image);
   assert.ok(image);
   assert.equal(body.messages[0].content.filter(item => item.image).length, 6);
@@ -79,7 +85,12 @@ try {
   assert.equal(status.providers.deepseek.configured, false);
   assert.equal((await json("/api/ai/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "deepseek" }) })).configured, false);
   assert.equal((await json("/api/ai/status")).provider, "deepseek");
+  await json("/api/ai/test", { method: "POST" }, 503);
   assert.equal((await json("/api/ai/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "bedrock" }) })).configured, true);
+  const connection = await json("/api/ai/test", { method: "POST" });
+  assert.equal(connection.ok, true);
+  assert.equal(connection.provider, "bedrock");
+  assert.equal(connection.model, "mock.model");
   const category = await json("/api/categories", post({ name: "Bedrock category" }), 201);
   const project = await json("/api/projects", post({ name: "Bedrock project", categoryId: category.id }), 201);
   const form = new FormData();

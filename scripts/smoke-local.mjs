@@ -32,6 +32,12 @@ const mock = createServer(async (request, response) => {
   assert.deepEqual(input.response_format, { type: "json_object" });
   const vision = Array.isArray(input.messages[1].content);
   const facts = JSON.parse(vision ? input.messages[1].content[0].text : input.messages[1].content);
+  if (facts.probe === "cadlint-connection-check-v1") {
+    assert.equal(vision, false);
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ ok: mockMode !== "probe-invalid" }) } }] }));
+    return;
+  }
   const requirements = Array.isArray(facts.pages);
   const baselineFacts = input.messages[0].content.includes("visible textual facts");
   if (vision) {
@@ -97,9 +103,17 @@ try {
   const selectProvider = provider => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) });
   assert.equal((await json("/api/ai/status", selectProvider("bedrock"))).configured, false);
   assert.equal((await json("/api/ai/status")).provider, "bedrock");
+  await json("/api/ai/test", { method: "POST" }, 503);
   await json(`/api/projects/${project.id}/baselines`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drawingId: drawing.id }) }, 503);
   assert.equal((await json("/api/ai/status", selectProvider("deepseek"))).configured, true);
   assert.equal((await json("/api/ai/status")).source, "saved");
+  const connection = await json("/api/ai/test", { method: "POST" });
+  assert.equal(connection.ok, true);
+  assert.equal(connection.provider, "deepseek");
+  assert.equal(connection.model, "deepseek-flash");
+  mockMode = "probe-invalid";
+  await json("/api/ai/test", { method: "POST" }, 502);
+  mockMode = "success";
   assert.equal(analysis.pageCount, 1);
   assert.equal(analysis.pages[0].pathPaint, 1);
   assert.equal(analysis.pages[0].status, "vector_content");
