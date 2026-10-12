@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { BaselineDifference, DrawingFact } from "./store";
 
 const key = (fact: DrawingFact) => `${fact.kind}:${fact.quote.replace(/\s+/g, " ").trim().toLocaleLowerCase()}`;
-const reference = (fact: DrawingFact) => ({ id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod, textOrigin: fact.textOrigin });
+const reference = (fact: DrawingFact) => ({ id: fact.id, page: fact.page, quote: fact.quote, sourceMethod: fact.sourceMethod, textOrigin: fact.textOrigin, imageBox: fact.imageBox });
 const distance = (a: DrawingFact, b: DrawingFact) => a.textOrigin && b.textOrigin ? Math.hypot(a.textOrigin.x - b.textOrigin.x, a.textOrigin.y - b.textOrigin.y) : 0;
 const cost = (a: DrawingFact, b: DrawingFact) => (a.page === b.page ? 0 : 1_000_000_000 + Math.abs(a.page - b.page) * 1_000_000) + Math.min(distance(a, b), 100_000);
 

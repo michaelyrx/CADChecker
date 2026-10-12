@@ -45,7 +45,7 @@ const mock = createServer(async (request, response) => {
   if (mockMode === "rate-limit") { response.writeHead(429); response.end("limited"); return; }
   response.setHeader("Content-Type", "application/json");
   const quote = facts.pages?.[0]?.text.includes("3 MPa") ? "MAX PRESSURE 3 MPa" : "MAX PRESSURE 2 MPa";
-  const content = baselineFacts ? { facts: [{ page: 1, kind: "technical_note", quote: mockMode === "baseline-invalid" ? "MAX PRESSURE 99 MPa" : vision ? "VISIBLE VISION NOTE" : quote, ...(vision ? { regionId: mockMode === "bad-region" ? "unknown" : facts.renderedRegions[0].regionId } : {}) }] } : requirements ? { requirements: [{ page: 1, quote: mockMode === "requirements-invalid" ? "MAX PRESSURE 99 MPa" : quote }] } : { summary: "Review page input quality", possibleCauses: ["Export settings"], recommendedActions: ["Check PDF export"], limitations: "No CAD geometry checked" };
+  const content = baselineFacts ? { facts: [{ page: 1, kind: "technical_note", quote: mockMode === "baseline-invalid" ? "MAX PRESSURE 99 MPa" : vision ? "VISIBLE VISION NOTE" : quote, ...(vision ? { regionId: mockMode === "bad-region" ? "unknown" : facts.renderedRegions[0].regionId, bbox: mockMode === "bad-box" ? [900, 100, 200, 100] : [100, 150, 300, 80] } : mockMode === "bad-text-region" ? { regionId: "unknown" } : {}) }] } : requirements ? { requirements: [{ page: 1, quote: mockMode === "requirements-invalid" ? "MAX PRESSURE 99 MPa" : quote }] } : { summary: "Review page input quality", possibleCauses: ["Export settings"], recommendedActions: ["Check PDF export"], limitations: "No CAD geometry checked" };
   response.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: mockMode === "invalid" ? "not-json" : JSON.stringify(content) } }], usage: { prompt_tokens: 50, completion_tokens: 30, total_tokens: 80 } }));
 });
 await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127.0.0.1", resolve));
@@ -310,6 +310,8 @@ try {
   mockMode = "baseline-invalid";
   await json(baselineUrl, learn(noteDrawing.id), 502);
   assert.equal((await json(baselineUrl)).learningRuns[0].status, "failed");
+  mockMode = "bad-text-region";
+  await json(baselineUrl, learn(noteDrawing.id), 502);
   mockMode = "success";
   const baseline = await json(baselineUrl, learn(noteDrawing.id), 201);
   assert.equal(baseline.status, "draft");
@@ -395,6 +397,10 @@ try {
   assert.equal(visionBaseline.facts[0].regionId, "p1-r1");
   assert.ok(visionBaseline.facts[0].regionRect.width > 0);
   assert.equal(visionBaseline.facts[0].sourceMethod, "vision");
+  assert.deepEqual(visionBaseline.facts[0].imageBox, { x: 100, y: 150, width: 300, height: 80 });
+  const visionEvidence = await fetch(`${base}/api/baselines/${visionBaseline.id}/visual-evidence/${visionBaseline.facts[0].id}`);
+  assert.equal(visionEvidence.status, 200);
+  assert.match(await visionEvidence.text(), /<rect x=/);
   assert.equal(visionBaseline.facts[0].nearbyPaths, undefined);
   await json(`/api/baselines/${visionBaseline.id}/facts/${visionBaseline.facts[0].id}/evidence`, undefined, 409);
   assert.equal(visionBaseline.facts[0].review, "pending");
@@ -407,6 +413,8 @@ try {
   const large = await json(`/api/projects/${project.id}/drawings`, { method: "POST", body: uploadBody(makePdf("25 25 m 975 675 l S\n", "[0 0 1000 700]"), "large-vector.pdf") }, 201);
   await json(`/api/drawings/${large.id}/analysis`, { method: "POST" });
   mockMode = "bad-region";
+  await json(baselineUrl, learn(large.id), 502);
+  mockMode = "bad-box";
   await json(baselineUrl, learn(large.id), 502);
   mockMode = "success";
   const tiled = await json(baselineUrl, learn(large.id), 201);

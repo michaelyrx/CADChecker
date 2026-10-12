@@ -43,7 +43,7 @@ const mock = createServer(async (request, response) => {
   const regionId = payload.renderedRegions[0].regionId;
   const secondRegionId = payload.renderedRegions[1].regionId;
   response.setHeader("Content-Type", "application/json");
-  response.end(JSON.stringify({ output: { message: { role: "assistant", content: [{ text: JSON.stringify({ facts: [{ page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId }, { page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId: secondRegionId }], observations: [{ page: 1, regionId: badObservation ? "unknown" : regionId, kind: "feature", description: "One visible diagonal line" }] }) }] } }, stopReason: "end_turn", usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 } }));
+  response.end(JSON.stringify({ output: { message: { role: "assistant", content: [{ text: JSON.stringify({ facts: [{ page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId, bbox: [100, 200, 300, 80] }, { page: 1, kind: "technical_note", quote: "BEDROCK MOCK NOTE", regionId: secondRegionId }], observations: [{ page: 1, regionId: badObservation ? "unknown" : regionId, kind: "feature", description: "One visible diagonal line", bbox: [200, 100, 500, 700] }] }) }] } }, stopReason: "end_turn", usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 } }));
   } catch (error) { console.error(error); response.writeHead(500); response.end("mock failed"); }
 });
 await new Promise((resolve, reject) => mock.once("error", reject).listen(0, "127.0.0.1", resolve));
@@ -90,7 +90,12 @@ try {
   assert.equal(baseline.facts[0].review, "pending");
   assert.equal(baseline.facts.length, 2);
   assert.equal(baseline.observations[0].kind, "feature");
+  assert.deepEqual(baseline.observations[0].imageBox, { x: 200, y: 100, width: 500, height: 700 });
   assert.equal((await fetch(`${base}/api/baselines/${baseline.id}/regions/${baseline.observations[0].regionId}`)).status, 200);
+  const baselineVisual = await fetch(`${base}/api/baselines/${baseline.id}/visual-evidence/${baseline.observations[0].id}`);
+  assert.equal(baselineVisual.status, 200);
+  assert.match(await baselineVisual.text(), /<rect x=/);
+  await json(`/api/baselines/${baseline.id}/visual-evidence/${baseline.facts[1].id}`, undefined, 409);
   const patch = body => ({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await json(`/api/baselines/${baseline.id}`, patch({ action: "approve" }), 409);
   await json(`/api/baselines/${baseline.id}`, patch({ action: "review", factId: baseline.facts[0].id, review: "confirmed" }));
@@ -106,6 +111,7 @@ try {
   assert.equal(comparison.targetObservations[0].kind, "feature");
   assert.equal(comparison.differences.length, 4);
   assert.ok(comparison.differences.every(item => item.status === "ambiguous"));
+  assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/visual-evidence/${comparison.targetObservations[0].id}`)).status, 200);
   assert.equal((await fetch(`${base}/api/baseline-comparisons/${comparison.id}/regions/${comparison.targetObservations[0].regionId}`)).status, 200);
   assert.ok(sawImage);
   console.log("Bedrock mock smoke test passed: IAM signing, Converse vision, baseline evidence and review gate.");
