@@ -7,6 +7,12 @@ Parameters:
   BedrockModelId:
     Type: String
     Default: ''
+  DeepSeekSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:760050152813:secret:/cadlint/dev/deepseek-api-key-n54Lzw
+  DeepSeekSecretJsonKey:
+    Type: String
+    Default: /cadlint/dev/deepseek-api-key
   DesiredCount:
     Type: Number
     Default: 1
@@ -146,6 +152,27 @@ Resources:
                   - bedrock:InvokeModelWithResponseStream
                 Resource: '*'
 
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: cadlint-deepseek-secret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DeepSeekSecretArn
+
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -157,7 +184,7 @@ Resources:
         OperatingSystemFamily: LINUX
       Cpu: '1024'
       Memory: '2048'
-      ExecutionRoleArn: arn:aws:iam::760050152813:role/autoreg-dev-execution
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
       TaskRoleArn: !GetAtt TaskRole.Arn
       Volumes:
         - Name: data
@@ -182,6 +209,9 @@ Resources:
               Value: !Ref BedrockModelId
             - Name: NEXT_TELEMETRY_DISABLED
               Value: '1'
+          Secrets:
+            - Name: DEEPSEEK_API_KEY
+              ValueFrom: !Sub '${DeepSeekSecretArn}:${DeepSeekSecretJsonKey}::'
           MountPoints:
             - SourceVolume: data
               ContainerPath: /data
