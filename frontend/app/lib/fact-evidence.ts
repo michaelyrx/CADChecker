@@ -34,11 +34,13 @@ export async function factEvidence(source: { drawingId: string; analysisRunId: s
       const y = item.bbox.y * 2 - top;
       const w = item.bbox.width * 2;
       const h = item.bbox.height * 2;
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="#e46e16" stroke-width="2"/><text x="${clamp(x, 2, pixelWidth - 16)}" y="${clamp(y - 4, 14, pixelHeight - 3)}" font-size="12" font-weight="700" fill="#a43b08">${index + 1}</text>`;
+      const selected = fact.pathAssociation?.pathId === item.id;
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${selected ? "#16834a" : "#e46e16"}" stroke-width="${selected ? 3 : 2}"/><text x="${clamp(x, 2, pixelWidth - 16)}" y="${clamp(y - 4, 14, pixelHeight - 3)}" font-size="12" font-weight="700" fill="${selected ? "#116638" : "#a43b08"}">${index + 1}</text>`;
     }).join("");
     const pointX = fact.textOrigin.x * 2 - left;
     const pointY = fact.textOrigin.y * 2 - top;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}" viewBox="0 0 ${pixelWidth} ${pixelHeight}" role="img" aria-label="PDF text origin and nearby vector path boxes"><desc>Original PDF crop. Red dot: text origin. Orange numbered rectangles: nearby vector paths in list order, without a verified geometry link.</desc><image href="data:image/jpeg;base64,${jpeg.toString("base64")}" x="0" y="0" width="${pixelWidth}" height="${pixelHeight}"/><g>${boxes}</g><circle cx="${pointX}" cy="${pointY}" r="5" fill="#e52835" stroke="white" stroke-width="2"/></svg>`;
+    const description = fact.pathAssociation ? "Green rectangle: path selected by a human, not a verified CAD feature or dimension attachment." : "No path has been selected.";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}" viewBox="0 0 ${pixelWidth} ${pixelHeight}" role="img" aria-label="PDF text origin and nearby vector path boxes"><desc>Original PDF crop. Red dot: text origin. Orange numbered rectangles: nearby vector path candidates. ${description}</desc><image href="data:image/jpeg;base64,${jpeg.toString("base64")}" x="0" y="0" width="${pixelWidth}" height="${pixelHeight}"/><g>${boxes}</g><circle cx="${pointX}" cy="${pointY}" r="5" fill="#e52835" stroke="white" stroke-width="2"/></svg>`;
     return new Response(svg, { headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Content-Disposition": "inline", "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; img-src data:" } });
   } finally {
     await rm(directory, { recursive: true, force: true });
