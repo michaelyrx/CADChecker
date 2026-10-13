@@ -1,4 +1,5 @@
-import { learnBaseline } from "@/app/lib/baselines";
+import { after } from "next/server";
+import { startBaselineLearning } from "@/app/lib/baselines";
 import { failure, readDb } from "@/app/lib/store";
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
@@ -16,7 +17,11 @@ export async function POST(request: Request, { params }: Context) {
   try { body = await request.json(); } catch { return failure("Invalid JSON"); }
   const drawingId = (body as { drawingId?: unknown } | null)?.drawingId;
   if (typeof drawingId !== "string" || !drawingId) return failure("Drawing is required");
-  try { return Response.json(await learnBaseline(id, drawingId), { status: 201 }); }
+  try {
+    const { run, perform } = await startBaselineLearning(id, drawingId);
+    after(perform);
+    return Response.json(run, { status: 202 });
+  }
   catch (error) {
     const message = (error as Error).message;
     if (message === "Drawing not found in project") return failure(message, 404);
