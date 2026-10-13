@@ -1,3 +1,5 @@
+import path from "node:path";
+
 /** @type {import('next').NextConfig} */
-const nextConfig = { outputFileTracingRoot: process.cwd(), eslint: { ignoreDuringBuilds: true } };
+const nextConfig = { output: "standalone", outputFileTracingRoot: path.resolve(process.cwd(), ".."), eslint: { ignoreDuringBuilds: true } };
 export default nextConfig;

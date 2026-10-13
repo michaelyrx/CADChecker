@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CADLint single-instance validation deployment with persistent PDF storage and Cognito access control
+
+Parameters:
+  ImageUri:
+    Type: String
+  BedrockModelId:
+    Type: String
+    Default: ''
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 1
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: cadlint.caelvyr.com
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: cadlint.caelvyr.com
+          HostedZoneId: Z005306238AQ8QLBBB6RT
+
+  ListenerCertificate:
+    Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
+    Properties:
+      ListenerArn: arn:aws:elasticloadbalancing:us-east-1:760050152813:listener/app/autoreg-dev/343223973ed03f1f/1c8af25fe3227c8f
+      Certificates:
+        - CertificateArn: !Ref Certificate
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: Z005306238AQ8QLBBB6RT
+      Name: cadlint.caelvyr.com.
+      Type: A
+      AliasTarget:
+        DNSName: autoreg-dev-1842077983.us-east-1.elb.amazonaws.com.
+        HostedZoneId: Z35SXDOTRQ7X7K
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: us-east-1_SoAWutIX4
+      GenerateSecret: true
+      SupportedIdentityProviders: [COGNITO]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      CallbackURLs: [https://cadlint.caelvyr.com/oauth2/idpresponse]
+      LogoutURLs: [https://cadlint.caelvyr.com/]
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CADLint ECS task
+      VpcId: vpc-0e043a99e9120c9b9
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: sg-0ca0560fa24f42690
+
+  FileSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CADLint EFS mount targets
+      VpcId: vpc-0e043a99e9120c9b9
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref TaskSecurityGroup
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      BackupPolicy:
+        Status: ENABLED
+      FileSystemTags:
+        - Key: Name
+          Value: cadlint-dev
+
+  MountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: subnet-07421ed37a7fb6bc1
+      SecurityGroups: [!Ref FileSecurityGroup]
+
+  MountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: subnet-0494b77cb48665d2a
+      SecurityGroups: [!Ref FileSecurityGroup]
+
+  AccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser:
+        Uid: '0'
+        Gid: '0'
+      RootDirectory:
+        Path: /cadlint
+        CreationInfo:
+          OwnerUid: '0'
+          OwnerGid: '0'
+          Permissions: '0755'
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/cadlint-dev
+      RetentionInDays: 14
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cadlint-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !GetAtt FileSystem.Arn
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: cadlint-dev
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: arn:aws:iam::760050152813:role/autoreg-dev-execution
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref FileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: web
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+          Environment:
+            - Name: CADLINT_DATA_DIR
+              Value: /data
+            - Name: AWS_REGION
+              Value: us-east-1
+            - Name: BEDROCK_MODEL_ID
+              Value: !Ref BedrockModelId
+            - Name: NEXT_TELEMETRY_DISABLED
+              Value: '1'
+          MountPoints:
+            - SourceVolume: data
+              ContainerPath: /data
+              ReadOnly: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: web
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: cadlint-dev
+      VpcId: vpc-0e043a99e9120c9b9
+      Protocol: HTTP
+      Port: 3000
+      TargetType: ip
+      HealthCheckPath: /api/health
+      Matcher:
+        HttpCode: '200'
+
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: arn:aws:elasticloadbalancing:us-east-1:760050152813:listener/app/autoreg-dev/343223973ed03f1f/1c8af25fe3227c8f
+      Priority: 1
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values: [cadlint.caelvyr.com]
+      Actions:
+        - Type: authenticate-cognito
+          Order: 1
+          AuthenticateCognitoConfig:
+            UserPoolArn: arn:aws:cognito-idp:us-east-1:760050152813:userpool/us-east-1_SoAWutIX4
+            UserPoolClientId: !Ref UserPoolClient
+            UserPoolDomain: autoreg-dev-760050152813
+            SessionCookieName: CADLintAuthSession
+            OnUnauthenticatedRequest: authenticate
+            Scope: openid
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref TargetGroup
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: [ListenerRule, MountTargetA, MountTargetB]
+    Properties:
+      ServiceName: cadlint-dev
+      Cluster: arn:aws:ecs:us-east-1:760050152813:cluster/autoreg-dev
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [subnet-07421ed37a7fb6bc1, subnet-0494b77cb48665d2a]
+          SecurityGroups: [!Ref TaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: web
+          ContainerPort: 3000
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  Url:
+    Value: https://cadlint.caelvyr.com/
+  FileSystemId:
+    Value: !Ref FileSystem
+  ServiceName:
+    Value: !GetAtt Service.Name
