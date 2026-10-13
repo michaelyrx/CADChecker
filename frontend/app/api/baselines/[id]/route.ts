@@ -7,10 +7,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { id } = await params;
   let body: unknown;
   try { body = await request.json(); } catch { return failure("Invalid JSON"); }
-  const input = body as { action?: unknown; factId?: unknown; observationId?: unknown; review?: unknown; page?: unknown; kind?: unknown; quote?: unknown; pathId?: unknown } | null;
-  if (input?.action !== "review" && input?.action !== "review-observation" && input?.action !== "approve" && input?.action !== "add" && input?.action !== "correct" && input?.action !== "link-path" && input?.action !== "unlink-path") return failure("Invalid baseline action");
+  const input = body as { action?: unknown; factId?: unknown; observationId?: unknown; graphId?: unknown; review?: unknown; page?: unknown; kind?: unknown; quote?: unknown; pathId?: unknown } | null;
+  if (input?.action !== "review" && input?.action !== "review-observation" && input?.action !== "review-graph" && input?.action !== "approve" && input?.action !== "add" && input?.action !== "correct" && input?.action !== "link-path" && input?.action !== "unlink-path") return failure("Invalid baseline action");
   if (input.action === "review" && (typeof input.factId !== "string" || !["confirmed", "rejected"].includes(String(input.review)))) return failure("Invalid fact review");
   if (input.action === "review-observation" && (typeof input.observationId !== "string" || !["confirmed", "rejected"].includes(String(input.review)))) return failure("Invalid observation review");
+  if (input.action === "review-graph" && (typeof input.graphId !== "string" || !["confirmed", "rejected"].includes(String(input.review)))) return failure("Invalid graph review");
   if (input.action === "add" && (typeof input.page !== "number" || typeof input.kind !== "string" || typeof input.quote !== "string")) return failure("Invalid drawing fact");
   if (input.action === "correct" && (typeof input.factId !== "string" || typeof input.quote !== "string" || input.quote.trim().length < 3 || input.quote.trim().length > 300 || typeof input.kind !== "string" || !["identity", "view_label", "dimension_text", "gdt_text", "technical_note"].includes(input.kind))) return failure("Invalid visual correction");
   if (input.action === "link-path" && (typeof input.factId !== "string" || typeof input.pathId !== "string" || !/^P\d+-V\d+$/.test(input.pathId))) return failure("Invalid path association");
@@ -63,8 +64,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const observation = item.observations?.find(value => value.id === input.observationId);
         if (!observation) throw new Error("Observation not found");
         observation.review = input.review as "confirmed" | "rejected";
+      } else if (input.action === "review-graph") {
+        const collections = item.graph && [item.graph.views, item.graph.features, item.graph.objectRelations, item.graph.annotations, item.graph.annotationRelations];
+        const graphItem = collections?.flat().find(value => value.id === input.graphId);
+        if (!graphItem) throw new Error("Graph item not found");
+        graphItem.review = input.review as "confirmed" | "rejected";
       } else {
-        if (item.facts.some(value => value.review === "pending") || item.observations?.some(value => value.review === "pending") || !item.facts.some(value => value.review === "confirmed") && !item.observations?.some(value => value.review === "confirmed")) throw new Error("Review every candidate and confirm at least one before approval");
+        const graphItems = item.graph && [item.graph.views, item.graph.features, item.graph.objectRelations, item.graph.annotations, item.graph.annotationRelations].flat() || [];
+        if (item.promptVersion === "baseline-object-graph-v11" && (!graphItems.length || item.partialText)) throw new Error("Object inventory or drawing coverage is incomplete");
+        if (item.facts.some(value => value.review === "pending") || item.observations?.some(value => value.review === "pending") || graphItems.some(value => value.review === "pending") || !item.facts.some(value => value.review === "confirmed") && !item.observations?.some(value => value.review === "confirmed") && !graphItems.some(value => value.review === "confirmed")) throw new Error("Review every candidate and confirm at least one before approval");
         item.status = "approved";
         item.approvedAt = new Date().toISOString();
       }
@@ -73,8 +81,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json(baseline);
   } catch (error) {
     const message = (error as Error).message;
-    if (message === "Baseline not found" || message === "Fact not found" || message === "Observation not found") return failure(message, 404);
-    if (["Approved baseline cannot be changed", "Review every candidate and confirm at least one before approval", "Fact already exists", "Only visual facts can be corrected here", "Confirm a locatable annotation before linking a path", "Path is not a candidate for this annotation", "Path candidate no longer matches the analysis source", "Baseline changed during path review", "No path association to clear"].includes(message)) return failure(message, 409);
+    if (message === "Baseline not found" || message === "Fact not found" || message === "Observation not found" || message === "Graph item not found") return failure(message, 404);
+    if (["Approved baseline cannot be changed", "Object inventory or drawing coverage is incomplete", "Review every candidate and confirm at least one before approval", "Fact already exists", "Only visual facts can be corrected here", "Confirm a locatable annotation before linking a path", "Path is not a candidate for this annotation", "Path candidate no longer matches the analysis source", "Baseline changed during path review", "No path association to clear"].includes(message)) return failure(message, 409);
     if (["Invalid drawing fact", "Fact quote is not in the PDF text", "Analysis text source is invalid", "Analysis vector source is invalid"].includes(message)) return failure(message);
     throw error;
   }
