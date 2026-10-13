@@ -28,3 +28,13 @@ test('rejects incomplete response instead of silently accepting partial inventor
   assert.throws(() => appendGraphRegion(emptyGraph(), { views: [], features: [] }, region), /incomplete object graph/);
   assert.throws(() => appendGraphRegion(emptyGraph(), { views: [item('x', 'A'), item('x', 'B')], features: [], objectRelations: [], annotations: [], annotationRelations: [] }, region), /duplicate/);
 });
+
+test('consolidates repeated logical views and rewrites linked feature view IDs', async () => {
+  const { consolidateViews } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+  const first = appendGraphRegion(emptyGraph(), { views: [item('v1', 'Detail D-D', { viewCode: 'D-D' })], features: [], objectRelations: [], annotations: [], annotationRelations: [] }, region);
+  const second = appendGraphRegion(first, { views: [item('v2', 'Section D-D', { viewCode: 'D-D' })], features: [item('f2', 'Rib end', { viewId: 'v2' })], objectRelations: [], annotations: [], annotationRelations: [] }, { ...region, regionId: 'p1-r2' });
+  const result = consolidateViews(second);
+  assert.equal(result.views.length, 1);
+  assert.equal(result.views[0].occurrences, 2);
+  assert.equal(result.features[0].viewId, result.views[0].id);
+});

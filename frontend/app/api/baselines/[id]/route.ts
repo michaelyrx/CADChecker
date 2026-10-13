@@ -3,6 +3,25 @@ import { verifiedPathAssociation } from "@/app/lib/path-association";
 import { failure, readDb, updateDb, type DrawingFactKind } from "@/app/lib/store";
 export const runtime = "nodejs";
 
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  try {
+    await updateDb(db => {
+      const index = db.baselines.findIndex(value => value.id === id);
+      if (index < 0) throw new Error("Baseline not found");
+      if (db.baselines[index].status !== "draft") throw new Error("Only draft baselines can be deleted");
+      if (db.baselineComparisons.some(value => value.baselineId === id)) throw new Error("Baseline has comparisons");
+      db.baselines.splice(index, 1);
+    });
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    const message = (error as Error).message;
+    if (message === "Baseline not found") return failure(message, 404);
+    if (message === "Only draft baselines can be deleted" || message === "Baseline has comparisons") return failure(message, 409);
+    throw error;
+  }
+}
+
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   let body: unknown;

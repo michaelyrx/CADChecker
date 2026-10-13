@@ -41,7 +41,7 @@ export function appendGraphRegion(graph: BaselineGraph, response: unknown, regio
       const id = `${region.regionId}-${localKey(localId)}-${createHash("sha256").update(`${name}:${localId}`).digest("hex").slice(0, 6)}`;
       ids.set(localId, id);
       const confidence = typeof item.confidence === "number" && Number.isFinite(item.confidence) ? Math.min(0.8, Math.max(0, item.confidence)) : 0.4;
-      parsed[name].push({ id, localId, page: region.page, regionId: region.regionId, ...(area ? { imageBox: area, visualPageLocation: pageLocation(region, area) } : {}), label, type, confidence, uncertainty: clean(item.uncertainty, 300) || undefined, rawText: clean(item.rawText, 300) || undefined, graphics: Array.isArray(item.graphics) ? item.graphics.map(value => clean(value, 80)).filter(Boolean).slice(0, 12) : undefined, relation: clean(item.relation, 100) || undefined, review: "pending" });
+      parsed[name].push({ id, localId, page: region.page, regionId: region.regionId, ...(area ? { imageBox: area, visualPageLocation: pageLocation(region, area) } : {}), label, type, viewCode: name === "views" ? clean(item.viewCode, 40).toUpperCase().replace(/^VIEW[-\s]*/, "").replace(/\s+/g, "") || undefined : undefined, confidence, uncertainty: clean(item.uncertainty, 300) || undefined, rawText: clean(item.rawText, 300) || undefined, graphics: Array.isArray(item.graphics) ? item.graphics.map(value => clean(value, 80)).filter(Boolean).slice(0, 12) : undefined, relation: clean(item.relation, 100) || undefined, review: "pending" });
     }
   }
   const nodeIds = new Set([...parsed.views, ...parsed.features, ...parsed.annotations].map(item => item.id));
@@ -72,5 +72,28 @@ export function appendGraphRegion(graph: BaselineGraph, response: unknown, regio
     if (!item.graphics?.length && !/note|title|label|注|标题|视图/i.test(item.type)) next.reviewItems.push({ id: `${item.id}-graphics`, targetId: item.id, reason: "Dimension arrows, extension lines or leader were not reconstructed" });
   }
   next.coveredRegions.push(region.regionId);
+  return next;
+}
+
+export function consolidateViews(graph: BaselineGraph): BaselineGraph {
+  const next = structuredClone(graph);
+  const canonical = new Map<string, BaselineGraphItem>();
+  const aliases = new Map<string, string>();
+  const views: BaselineGraphItem[] = [];
+  for (const view of next.views) {
+    const key = view.viewCode && /^(LEFT|FRONT|RIGHT|REAR|[A-Z]{1,3}(?:-[A-Z]{1,3})?)$/.test(view.viewCode) ? `${view.page}:${view.viewCode}` : "";
+    const earlier = key ? canonical.get(key) : undefined;
+    if (!earlier) { views.push(view); if (key) canonical.set(key, view); continue; }
+    earlier.occurrences = (earlier.occurrences || 1) + 1;
+    earlier.confidence = Math.min(earlier.confidence, view.confidence);
+    aliases.set(view.id, earlier.id);
+  }
+  next.views = views;
+  for (const item of [...next.features, ...next.annotations]) if (item.viewId && aliases.has(item.viewId)) item.viewId = aliases.get(item.viewId);
+  for (const item of [...next.objectRelations, ...next.annotationRelations]) {
+    item.sourceIds = item.sourceIds?.map(id => aliases.get(id) || id);
+    item.targetIds = item.targetIds?.map(id => aliases.get(id) || id);
+  }
+  next.reviewItems = next.reviewItems.map(item => ({ ...item, targetId: aliases.get(item.targetId) || item.targetId }));
   return next;
 }
